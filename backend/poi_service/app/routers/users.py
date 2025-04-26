@@ -1,0 +1,145 @@
+from typing import List
+from fastapi import APIRouter, Depends, Path
+from sqlalchemy.orm import Session
+from app import crud, schemas, models
+from app.database import get_db
+from app.errors import APIError, ErrorCode
+from app.security import get_current_active_user, get_current_admin_user, verify_api_key
+
+router = APIRouter(
+    prefix="/users",
+    tags=["用户管理"],
+)
+
+# === 用户个人信息管理（所有已认证用户可访问）===
+@router.get("/me", response_model=schemas.User)
+async def read_user_me(
+    current_user: models.User = Depends(get_current_active_user)
+):
+    """获取当前用户信息"""
+    # 手动转换 SQLAlchemy 模型到字典，确保枚举值被转换为字符串
+    user_dict = {
+        "id": current_user.id,
+        "username": current_user.username,
+        "email": current_user.email,
+        "role": current_user.role.value,  # 直接使用枚举的 value 属性获取字符串
+        "is_active": current_user.is_active,
+        "created_at": current_user.created_at
+    }
+    return user_dict  # FastAPI 会自动将字典转换为 schemas.User
+
+@router.put("/me", response_model=schemas.User)
+async def update_user_me(
+    user_update: schemas.UserUpdate,
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """更新当前用户信息"""
+    if user_update.email:
+        # 检查邮箱是否已被其他用户使用
+        existing_user = crud.get_user_by_email(db, email=user_update.email)
+        if existing_user and existing_user.id != current_user.id:
+            raise APIError(
+                code=ErrorCode.USER_ALREADY_EXISTS,
+                message="此邮箱已被其他用户使用"
+            ).raise_http_exception()
+
+    if user_update.username:
+        # 检查用户名是否已被其他用户使用
+        existing_user = crud.get_user_by_username(db, username=user_update.username)
+        if existing_user and existing_user.id != current_user.id:
+            raise APIError(
+                code=ErrorCode.USER_ALREADY_EXISTS,
+                message="此用户名已被使用"
+            ).raise_http_exception()
+
+    updated_user = crud.update_user(db, current_user.id, user_update)
+    return updated_user
+
+# === 用户管理（仅内部维护人员可访问）===
+@router.get("/", response_model=List[schemas.User])
+async def read_users(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: models.User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """获取所有用户列表（仅内部维护人员）"""
+    if current_user.role != models.UserRole.ADMIN:
+        raise APIError(
+            code=ErrorCode.PERMISSION_DENIED,
+            message="只有内部维护人员可以查看用户列表"
+        ).raise_http_exception()
+    
+    users = crud.get_users(db, skip=skip, limit=limit)
+    
+    # 手动转换列表中的每个用户对象
+    return [
+        {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role.value,
+            "is_active": user.is_active,
+            "created_at": user.created_at
+        }
+        for user in users
+    ]
+
+@router.get("/{user_id}", response_model=schemas.User)
+async def read_user(
+    user_id: int = Path(..., title="用户ID"),
+    current_user: models.User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """获取指定用户信息（仅内部维护人员）"""
+    if current_user.role != models.UserRole.ADMIN:
+        raise APIError(
+            code=ErrorCode.PERMISSION_DENIED,
+            message="只有内部维护人员可以查看用户详情"
+        ).raise_http_exception()
+        
+    db_user = crud.get_user(db, user_id=user_id)
+    if not db_user:
+        raise APIError(
+            code=ErrorCode.USER_NOT_FOUND,
+            message=f"ID为{user_id}的用户不存在"
+        ).raise_http_exception()
+        
+    # 手动转换为字典返回，确保枚举值正确处理
+    return {
+        "id": db_user.id,
+        "username": db_user.username,
+        "email": db_user.email,
+        "role": db_user.role.value,
+        "is_active": db_user.is_active,
+        "created_at": db_user.created_at
+    }
+
+@router.put("/{user_id}/role")
+async def update_user_role(
+    user_id: int,
+    new_role: models.UserRole,
+    current_user: models.User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """更新用户角色（仅内部维护人员）"""
+    if current_user.role != models.UserRole.ADMIN:
+        raise APIError(
+            code=ErrorCode.PERMISSION_DENIED,
+            message="只有内部维护人员可以修改用户角色"
+        ).raise_http_exception()
+
+    db_user = crud.get_user(db, user_id=user_id)
+    if not db_user:
+        raise APIError(
+            code=ErrorCode.USER_NOT_FOUND,
+            message=f"ID为{user_id}的用户不存在"
+        ).raise_http_exception()
+
+    # 更新用户角色
+    db_user.role = new_role
+    db.commit()
+    db.refresh(db_user)
+    
+    return {"message": f"用户角色已更新为{new_role.value}"}
