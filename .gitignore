@@ -10,3 +10,4 @@ __pycache__/
 .vscode/
 # 忽略Mac系统垃圾文件
 .DS_Store.env
+.DS_Store
