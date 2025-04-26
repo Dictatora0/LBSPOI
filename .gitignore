@@ -1,13 +1,23 @@
-# 忽略环境变量文件
+# Ignore environment files
 .env
-# 忽略Python虚拟环境
-venv/
-# 忽略pyc文件
-*.pyc
+
+# Ignore macOS system files
+.DS_Store
+
+# Node.js
+node_modules/
+
+# Python
 __pycache__/
-# 忽略idea/vscode等编辑器配置
+*.pyc
+
+# Java
+*.class
+
+# Logs
+*.log
+
+# Others
+*.swp
 .idea/
 .vscode/
-# 忽略Mac系统垃圾文件
-.DS_Store.env
-.DS_Store
