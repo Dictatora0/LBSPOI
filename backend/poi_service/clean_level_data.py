@@ -63,4 +63,4 @@ def clean_level_data(engine):
 if __name__ == "__main__":
     engine = create_engine(settings.DATABASE_URL)
     clean_level_data(engine)
-    print("\n数据清理完成!")
+    print("\n数据清理完成")

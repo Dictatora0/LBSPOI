@@ -1,14 +1,47 @@
 // API基础URL
 const API_BASE_URL = '/api';
-let map, markers = {}, currentBoxSelect, currentRadiusSelect, currentRadiusMarker;
+
+// 检查Leaflet库是否已加载
+if (typeof L === 'undefined') {
+    console.error('Leaflet库未加载，将在Vue应用中尝试延迟加载');
+}
+
+// 初始化全局变量
+let map = null;
+let markers = {};
+let currentBoxSelect = null;
+let currentRadiusSelect = null;
+let currentRadiusMarker = null;
 
 // 确保axios可用
 const axios = window.axios || axios;
+
+// 设置Leaflet错误处理
+if (typeof L !== 'undefined') {
+    L.Marker.prototype.addTo = function(map) {
+        try {
+            if (!map) {
+                console.error('尝试将标记添加到未定义的地图');
+                return this;
+            }
+            map.addLayer(this);
+            return this;
+        } catch (error) {
+            console.error('添加标记到地图时出错:', error);
+            return this;
+        }
+    };
+}
 
 // 初始化Vue应用
 const app = new Vue({
     el: '#app',
     data: {
+        // 地图状态
+        mapInitialized: false,
+        mapLoading: true,
+        mapError: null,
+        
         // 地图相关
         pois: [],
         selectedPOI: null,
@@ -51,6 +84,13 @@ const app = new Vue({
         apiKeys: [],
         apiKeyLoading: false,
         
+        // 管理员面板
+        showAdminDialog: false,
+        adminSection: 'users', // 默认显示用户管理
+        adminUsers: [],
+        adminPOIs: [],
+        adminLoading: false,
+        
         // 周边设施查询
         showNearbyDialog: false,
         nearbyKeyword: '餐厅',
@@ -86,218 +126,453 @@ const app = new Vue({
         }
     },
     created() {
-        // 检查是否已登录
-        this.checkAuthentication();
+        // 检查是否已登录 (传入isInitialLoad=true)
+        this.checkAuthentication(true);
         
         // 加载数据
         this.loadProvinces();
         this.loadCategories();
+        
+        // 设置定期检查Token有效性
+        this.startTokenValidationInterval();
     },
     mounted() {
-        // 初始化地图
-        this.initMap();
+        console.log('Vue组件已挂载，准备初始化地图');
         
-        // 加载POI数据
-        this.loadPOIs();
+        // 确保在DOM完全准备好后初始化地图
+        this.$nextTick(() => {
+            // 为Safari兼容性，延迟初始化地图
+            setTimeout(() => {
+                this.safeInitMap();
+            }, 500);
+        });
+    },
+    destroyed() {
+        // 清除定时器
+        if (this.tokenValidationInterval) {
+            clearInterval(this.tokenValidationInterval);
+        }
     },
     methods: {
-        // 地图相关方法
-        initMap() {
+        // 安全的地图初始化方法
+        safeInitMap() {
+            if (this.mapInitialized) {
+                console.log('地图已初始化，跳过');
+                return;
+            }
+            
+            if (typeof L === 'undefined') {
+                // 如果Leaflet不可用，尝试动态加载它
+                console.error('Leaflet库不可用，尝试动态加载...');
+                this.loadLeaflet();
+                return;
+            }
+            
             try {
-                // 初始化地图，中心设置为中国
-                map = L.map('map').setView([35.86166, 104.195397], 5);
+                // 检查地图容器
+                const mapContainer = document.getElementById('map');
+                if (!mapContainer) {
+                    console.error('找不到地图容器');
+                    // 延迟重试
+                    setTimeout(() => this.safeInitMap(), 500);
+                    return;
+                }
                 
-                // 添加图层
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                }).addTo(map);
+                console.log('开始初始化地图');
+                this.mapLoading = true;
+                
+                // 使用setTimeout确保在单独的调用栈初始化地图
+                setTimeout(() => {
+                    try {
+                        console.log('创建地图实例');
+                        // 创建地图实例
+                        map = L.map('map', {
+                            attributionControl: false,
+                            zoomControl: false
+                        });
+                        
+                        // 添加控件
+                        L.control.attribution({
+                            position: 'bottomright'
+                        }).addTo(map);
+                        
+                        L.control.zoom({
+                            position: 'topright'
+                        }).addTo(map);
+                        
+                        // 设置视图
+                        map.setView([35.86166, 104.195397], 5);
+                        
+                        // 添加底图
+                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        }).addTo(map);
+                        
+                        console.log('地图初始化成功');
+                        this.mapInitialized = true;
+                        this.mapLoading = false;
+                        
+                        // 如果已经加载了POI数据，添加到地图
+                        if (this.pois && this.pois.length > 0) {
+                            console.log('添加已加载的POI数据到地图');
+                            this.safeAddMarkers(this.pois);
+                        }
+                        
+                    } catch (error) {
+                        console.error('地图初始化失败:', error);
+                        this.mapError = `地图初始化失败: ${error.message}`;
+                        this.mapLoading = false;
+                    }
+                }, 100);
+                
             } catch (error) {
                 console.error('初始化地图出错:', error);
+                this.mapError = error.message;
+                this.mapLoading = false;
             }
         },
         
-        resetMapView() {
-            // 重置地图视图
-            map.setView([35.86166, 104.195397], 5);
+        // 动态加载Leaflet库
+        loadLeaflet() {
+            console.log('动态加载Leaflet库...');
             
-            // 清除所有选择相关的图层
-            this.clearSelectionLayers();
+            // 加载CSS
+            const linkElement = document.createElement('link');
+            linkElement.rel = 'stylesheet';
+            linkElement.href = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.css';
+            document.head.appendChild(linkElement);
+            
+            // 加载JavaScript
+            const scriptElement = document.createElement('script');
+            scriptElement.src = 'https://unpkg.com/leaflet@1.7.1/dist/leaflet.js';
+            scriptElement.onload = () => {
+                console.log('Leaflet库加载成功');
+                // 延迟重试初始化
+                setTimeout(() => this.safeInitMap(), 500);
+            };
+            scriptElement.onerror = (error) => {
+                console.error('Leaflet库加载失败:', error);
+                this.mapError = '地图库加载失败，请刷新页面重试';
+            };
+            document.head.appendChild(scriptElement);
         },
         
-        centerMap() {
-            // 如果有选中的POI，居中显示
-            if (this.selectedPOI) {
-                map.setView([this.selectedPOI.latitude, this.selectedPOI.longitude], 12);
-            }
-        },
-        
-        activateBoxSelect() {
-            // 清除现有选择图层
-            this.clearSelectionLayers();
-            
-            // 初始化边界框选择
-            this.$message.info('请在地图上拖动鼠标框选区域');
-            
-            map.boxZoom.disable();  // 禁用默认的框选缩放
-            
-            let startPoint;
-            const onMouseDown = (e) => {
-                startPoint = e.latlng;
-                
-                // 添加mousemove和mouseup监听
-                map.on('mousemove', onMouseMove);
-                map.on('mouseup', onMouseUp);
-                
-                // 防止事件冒泡
-                L.DomEvent.preventDefault(e.originalEvent);
-                L.DomEvent.stopPropagation(e.originalEvent);
-            };
-            
-            const onMouseMove = (e) => {
-                if (currentBoxSelect) {
-                    map.removeLayer(currentBoxSelect);
-                }
-                
-                // 绘制矩形
-                const bounds = L.latLngBounds(startPoint, e.latlng);
-                currentBoxSelect = L.rectangle(bounds, {color: '#3388ff', weight: 1}).addTo(map);
-            };
-            
-            const onMouseUp = (e) => {
-                // 移除事件监听
-                map.off('mousemove', onMouseMove);
-                map.off('mouseup', onMouseUp);
-                map.off('mousedown', onMouseDown);
-                
-                // 获取边界框
-                const bounds = currentBoxSelect.getBounds();
-                
-                // 查询此区域内的POI
-                this.queryPOIsByBoundingBox(
-                    bounds.getSouth(),
-                    bounds.getWest(),
-                    bounds.getNorth(),
-                    bounds.getEast()
-                );
-                
-                // 启用默认的框选缩放
-                map.boxZoom.enable();
-            };
-            
-            // 添加mousedown监听
-            map.on('mousedown', onMouseDown);
-        },
-        
-        activateRadiusSelect() {
-            // 清除现有选择图层
-            this.clearSelectionLayers();
-            
-            // 初始化半径选择
-            this.$message.info('请在地图上点击中心点，然后拖动确定半径');
-            
-            let centerPoint;
-            
-            const onClick = (e) => {
-                centerPoint = e.latlng;
-                
-                // 添加中心点标记
-                currentRadiusMarker = L.marker(centerPoint).addTo(map);
-                
-                // 初始化半径为0
-                currentRadiusSelect = L.circle(centerPoint, {radius: 0, color: '#3388ff'}).addTo(map);
-                
-                // 切换为拖动模式
-                map.off('click', onClick);
-                map.on('mousemove', onMouseMove);
-                map.on('click', onSecondClick);
-            };
-            
-            const onMouseMove = (e) => {
-                // 计算半径（米）
-                const radius = centerPoint.distanceTo(e.latlng);
-                
-                // 更新圆形半径
-                currentRadiusSelect.setRadius(radius);
-            };
-            
-            const onSecondClick = (e) => {
-                // 计算最终半径（米）
-                const radius = centerPoint.distanceTo(e.latlng);
-                
-                // 查询此范围内的POI
-                this.queryPOIsByRadius(
-                    centerPoint.lat,
-                    centerPoint.lng,
-                    radius
-                );
-                
-                // 移除事件监听
-                map.off('mousemove', onMouseMove);
-                map.off('click', onSecondClick);
-            };
-            
-            // 添加click监听
-            map.on('click', onClick);
-        },
-        
-        clearSelectionLayers() {
-            // 清除框选图层
-            if (currentBoxSelect) {
-                map.removeLayer(currentBoxSelect);
-                currentBoxSelect = null;
+        // 安全地添加标记到地图
+        safeAddMarkers(pois) {
+            if (!this.mapInitialized || !map) {
+                console.log('地图未初始化，无法添加标记');
+                return;
             }
             
-            // 清除半径选择图层
-            if (currentRadiusSelect) {
-                map.removeLayer(currentRadiusSelect);
-                currentRadiusSelect = null;
-            }
+            console.log(`尝试添加 ${pois.length} 个标记到地图`);
             
-            // 清除半径中心点标记
-            if (currentRadiusMarker) {
-                map.removeLayer(currentRadiusMarker);
-                currentRadiusMarker = null;
-            }
-            
-            // 清除临时点标记
-            for (const key in markers) {
-                if (key.startsWith('temp_')) {
-                    map.removeLayer(markers[key]);
-                    delete markers[key];
-                }
-            }
-        },
-        
-        addMarkers(pois) {
             // 清除现有标记
             for (const id in markers) {
                 if (!id.startsWith('temp_')) {
-                    map.removeLayer(markers[id]);
+                    try {
+                        if (markers[id] && map) {
+                            map.removeLayer(markers[id]);
+                        }
+                    } catch (error) {
+                        console.error(`移除标记 ${id} 失败:`, error);
+                    }
                     delete markers[id];
                 }
             }
             
             // 添加新标记
+            let successCount = 0;
             pois.forEach(poi => {
-                const marker = L.marker([poi.latitude, poi.longitude])
-                    .bindPopup(`<b>${poi.name}</b><br>${poi.province} ${poi.city || ''}`)
-                    .on('click', () => {
+                try {
+                    if (!poi.latitude || !poi.longitude) {
+                        console.warn(`POI ${poi.id} 缺少坐标信息`);
+                        return;
+                    }
+                    
+                    const marker = L.marker([poi.latitude, poi.longitude]);
+                    
+                    // 绑定弹出信息
+                    marker.bindPopup(`<b>${poi.name}</b><br>${poi.province} ${poi.city || ''}`);
+                    
+                    // 绑定点击事件
+                    marker.on('click', () => {
                         this.selectPOI(poi);
                     });
-                markers[poi.id] = marker;
-                marker.addTo(map);
+                    
+                    // 存储标记
+                    markers[poi.id] = marker;
+                    
+                    // 添加到地图
+                    if (map) {
+                        marker.addTo(map);
+                        successCount++;
+                    }
+                } catch (error) {
+                    console.error(`添加POI ${poi.id} 标记失败:`, error);
+                }
             });
             
-            // 如果有标记，调整地图视图以显示所有标记
-            if (pois.length > 0) {
-                const group = new L.featureGroup(Object.values(markers).filter(m => m._map));
-                map.fitBounds(group.getBounds(), {padding: [50, 50]});
+            console.log(`成功添加 ${successCount}/${pois.length} 个标记`);
+            
+            // 如果有标记，调整地图视图
+            if (successCount > 0) {
+                try {
+                    const validMarkers = Object.values(markers).filter(m => m && map && m._map);
+                    if (validMarkers.length > 0) {
+                        const group = L.featureGroup(validMarkers);
+                        map.fitBounds(group.getBounds(), {padding: [50, 50]});
+                    }
+                } catch (error) {
+                    console.error('调整地图视图失败:', error);
+                }
+            }
+        },
+        
+        // 旧的方法转发到新的方法
+        initMap() {
+            this.safeInitMap();
+        },
+        
+        addMarkers(pois) {
+            this.safeAddMarkers(pois);
+        },
+        
+        resetMapView() {
+            // 重置地图视图
+            if (!map) {
+                console.error('地图未初始化，无法重置视图');
+                return;
+            }
+            
+            try {
+                map.setView([35.86166, 104.195397], 5);
+                
+                // 清除所有选择相关的图层
+                this.clearSelectionLayers();
+            } catch (error) {
+                console.error('重置地图视图时出错:', error);
+            }
+        },
+        
+        centerMap() {
+            // 如果有选中的POI，居中显示
+            if (!map) {
+                console.error('地图未初始化，无法居中显示');
+                return;
+            }
+            
+            try {
+                if (this.selectedPOI) {
+                    map.setView([this.selectedPOI.latitude, this.selectedPOI.longitude], 12);
+                }
+            } catch (error) {
+                console.error('居中显示POI时出错:', error);
+            }
+        },
+        
+        activateBoxSelect() {
+            if (!map) {
+                console.error('地图未初始化，无法激活框选');
+                return;
+            }
+            
+            try {
+                // 清除现有选择图层
+                this.clearSelectionLayers();
+                
+                // 初始化边界框选择
+                this.$message.info('请在地图上拖动鼠标框选区域');
+                
+                map.boxZoom.disable();  // 禁用默认的框选缩放
+                
+                let startPoint;
+                const onMouseDown = (e) => {
+                    startPoint = e.latlng;
+                    
+                    // 添加mousemove和mouseup监听
+                    map.on('mousemove', onMouseMove);
+                    map.on('mouseup', onMouseUp);
+                    
+                    // 防止事件冒泡
+                    L.DomEvent.preventDefault(e.originalEvent);
+                    L.DomEvent.stopPropagation(e.originalEvent);
+                };
+                
+                const onMouseMove = (e) => {
+                    if (currentBoxSelect) {
+                        map.removeLayer(currentBoxSelect);
+                    }
+                    
+                    // 绘制矩形
+                    const bounds = L.latLngBounds(startPoint, e.latlng);
+                    currentBoxSelect = L.rectangle(bounds, {color: '#3388ff', weight: 1}).addTo(map);
+                };
+                
+                const onMouseUp = (e) => {
+                    // 移除事件监听
+                    map.off('mousemove', onMouseMove);
+                    map.off('mouseup', onMouseUp);
+                    map.off('mousedown', onMouseDown);
+                    
+                    // 获取边界框
+                    if (currentBoxSelect) {
+                        const bounds = currentBoxSelect.getBounds();
+                        
+                        // 查询此区域内的POI
+                        this.queryPOIsByBoundingBox(
+                            bounds.getSouth(),
+                            bounds.getWest(),
+                            bounds.getNorth(),
+                            bounds.getEast()
+                        );
+                    }
+                    
+                    // 启用默认的框选缩放
+                    map.boxZoom.enable();
+                };
+                
+                // 添加mousedown监听
+                map.on('mousedown', onMouseDown);
+            } catch (error) {
+                console.error('激活框选功能时出错:', error);
+                // 确保恢复默认的框选缩放
+                if (map && map.boxZoom) {
+                    map.boxZoom.enable();
+                }
+            }
+        },
+        
+        activateRadiusSelect() {
+            if (!map) {
+                console.error('地图未初始化，无法激活半径选择');
+                return;
+            }
+            
+            try {
+                // 清除现有选择图层
+                this.clearSelectionLayers();
+                
+                // 初始化半径选择
+                this.$message.info('请在地图上点击中心点，然后拖动确定半径');
+                
+                let centerPoint;
+                
+                const onClick = (e) => {
+                    centerPoint = e.latlng;
+                    
+                    // 添加中心点标记
+                    currentRadiusMarker = L.marker(centerPoint).addTo(map);
+                    
+                    // 初始化半径为0
+                    currentRadiusSelect = L.circle(centerPoint, {radius: 0, color: '#3388ff'}).addTo(map);
+                    
+                    // 切换为拖动模式
+                    map.off('click', onClick);
+                    map.on('mousemove', onMouseMove);
+                    map.on('click', onSecondClick);
+                };
+                
+                const onMouseMove = (e) => {
+                    if (!centerPoint || !currentRadiusSelect) return;
+                    
+                    // 计算半径（米）
+                    const radius = centerPoint.distanceTo(e.latlng);
+                    
+                    // 更新圆形半径
+                    currentRadiusSelect.setRadius(radius);
+                };
+                
+                const onSecondClick = (e) => {
+                    if (!centerPoint) return;
+                    
+                    // 计算最终半径（米）
+                    const radius = centerPoint.distanceTo(e.latlng);
+                    
+                    // 查询此范围内的POI
+                    this.queryPOIsByRadius(
+                        centerPoint.lat,
+                        centerPoint.lng,
+                        radius
+                    );
+                    
+                    // 移除事件监听
+                    map.off('mousemove', onMouseMove);
+                    map.off('click', onSecondClick);
+                };
+                
+                // 添加click监听
+                map.on('click', onClick);
+            } catch (error) {
+                console.error('激活半径选择功能时出错:', error);
+                
+                // 清理事件监听，避免残余事件
+                if (map) {
+                    map.off('click');
+                    map.off('mousemove');
+                }
+            }
+        },
+        
+        clearSelectionLayers() {
+            try {
+                // 确保地图已初始化
+                if (!map) {
+                    console.error('地图未初始化，无法清除选择图层');
+                    return;
+                }
+                
+                // 清除框选图层
+                if (currentBoxSelect) {
+                    try {
+                        map.removeLayer(currentBoxSelect);
+                    } catch (error) {
+                        console.error('清除框选图层失败:', error);
+                    }
+                    currentBoxSelect = null;
+                }
+                
+                // 清除半径选择图层
+                if (currentRadiusSelect) {
+                    try {
+                        map.removeLayer(currentRadiusSelect);
+                    } catch (error) {
+                        console.error('清除半径选择图层失败:', error);
+                    }
+                    currentRadiusSelect = null;
+                }
+                
+                // 清除半径中心点标记
+                if (currentRadiusMarker) {
+                    try {
+                        map.removeLayer(currentRadiusMarker);
+                    } catch (error) {
+                        console.error('清除半径中心点标记失败:', error);
+                    }
+                    currentRadiusMarker = null;
+                }
+                
+                // 清除临时点标记
+                for (const key in markers) {
+                    if (key.startsWith('temp_')) {
+                        try {
+                            if (markers[key] && markers[key]._map) {
+                                map.removeLayer(markers[key]);
+                            }
+                            delete markers[key];
+                        } catch (error) {
+                            console.error(`清除临时标记 ${key} 失败:`, error);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('清除选择图层时发生错误:', error);
             }
         },
         
         // 数据加载方法
         async loadPOIs(page = 1, filters = {}) {
             this.loading = true;
+            let loadedSuccessfully = false; // 标记是否成功加载数据
             try {
                 // 构建查询参数
                 const params = {
@@ -315,14 +590,9 @@ const app = new Vue({
                 // 获取API密钥
                 const apiKey = localStorage.getItem('apiKey');
                 
-                // 无需API密钥也能工作，使用测试数据
+                // 如果没有 API 密钥，直接使用测试数据
                 if (!apiKey) {
-                    console.log('未找到API密钥，使用测试数据');
-                    
-                    // 延迟一下模拟加载
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    
-                    // 使用测试数据
+                    console.log('[loadPOIs] No API key found, using test data.');
                     this.pois = [
                         {
                             id: 1,
@@ -360,46 +630,65 @@ const app = new Vue({
                     ];
                     this.totalPOIs = this.pois.length;
                     this.currentPage = page;
+                    loadedSuccessfully = true; // 标记成功加载测试数据
+                } else {
+                    // 有 API 密钥，尝试从后端加载
+                    console.log(`[loadPOIs] Attempting to load with API Key: ${apiKey}`);
+                    // 发送请求到带斜杠的 URL
+                    const response = await axios.get(`${API_BASE_URL}/pois/?${queryString}`, { // 确认URL有斜杠
+                        headers: {
+                            'X-API-Key': apiKey
+                        }
+                    });
                     
-                    // 添加标记到地图
-                    this.addMarkers(this.pois);
-                    return;
+                    // 更新数据
+                    this.pois = response.data.items;
+                    this.totalPOIs = response.data.total;
+                    this.currentPage = page;
+                    loadedSuccessfully = true; // 标记成功从API加载
                 }
                 
-                // 发送请求
-                const response = await axios.get(`${API_BASE_URL}/pois?${queryString}`, {
-                    headers: {
-                        'X-API-Key': apiKey
-                    }
-                });
-                
-                // 更新数据
-                this.pois = response.data.items;
-                this.totalPOIs = response.data.total;
-                this.currentPage = page;
-                
-                // 添加标记到地图
-                this.addMarkers(this.pois);
+                // 如果地图已初始化，添加标记
+                if (this.mapInitialized && map) {
+                    console.log('地图已初始化，直接添加标记');
+                    this.safeAddMarkers(this.pois);
+                } else {
+                    console.log('地图未初始化，POI数据将在地图初始化后添加');
+                }
                 
             } catch (error) {
-                this.handleApiError(error);
-                // 使用静态数据作为后备
-                this.pois = [
-                    {
-                        id: 1,
-                        name: "西湖",
-                        province: "浙江省",
-                        city: "杭州市",
-                        category: "自然风光",
-                        level: "AAAAA",
-                        longitude: 120.14,
-                        latitude: 30.23,
-                        extensions: []
-                    }
-                ];
-                this.addMarkers(this.pois);
+                 console.log('[loadPOIs] API call failed, handling error:', error);
+                // 即使API失败，也允许 handleApiError 处理（例如，如果401则登出）
+                this.handleApiError(error); 
             } finally {
-                this.loading = false;
+                // 如果尝试从API加载但失败了 (loadedSuccessfully仍然为false)
+                // 并且错误处理后用户未登录或没有API Key了，则加载测试数据作为最终回退
+                if (!loadedSuccessfully && (!this.isLoggedIn || !localStorage.getItem('apiKey'))) {
+                     console.log('[loadPOIs] Loading test data as final fallback after API error.');
+                     this.pois = [
+                         {
+                            id: 1,
+                            name: "西湖",
+                            province: "浙江省",
+                            city: "杭州市",
+                            category: "自然风光",
+                            level: "AAAAA",
+                            longitude: 120.14,
+                            latitude: 30.23,
+                            extensions: []
+                        }
+                    ];
+                    this.totalPOIs = this.pois.length;
+                    this.currentPage = 1;
+                 } 
+                 
+                 // 如果地图已初始化，确保添加标记
+                 if (this.mapInitialized && map) {
+                     this.safeAddMarkers(this.pois);
+                 }
+                 
+                 this.loading = false;
+                 console.log('[loadPOIs] Finished loading.');
             }
         },
         
@@ -579,13 +868,16 @@ const app = new Vue({
             this.nearbyFacilities = [];
         },
         
-        async searchNearby() {
+        searchNearby: async function() {
+            // 检查是否有选择POI
             if (!this.selectedPOI) {
-                this.$message.warning('请先选择一个POI');
+                this.$message.warning('请先选择一个兴趣点');
                 return;
             }
             
+            console.log("搜索周边设施，半径：" + this.nearbyRadius + "米");
             this.nearbyLoading = true;
+            this.nearbyFacilities = [];
             
             try {
                 // 获取API密钥
@@ -608,7 +900,7 @@ const app = new Vue({
                     this.nearbyFacilities = response.data.pois.map(poi => ({
                         name: poi.name,
                         type: poi.type,
-                        distance: poi.distance + 'm',
+                        distance: Number(poi.distance),
                         address: poi.address,
                         location: {
                             lat: poi.location.split(',')[1],
@@ -627,35 +919,195 @@ const app = new Vue({
         },
         
         showOnMap(facility) {
-            // 在地图上添加临时标记
-            const tempId = 'temp_' + Date.now();
-            const marker = L.marker([facility.location.lat, facility.location.lng])
-                .bindPopup(`<b>${facility.name}</b><br>${facility.address}<br>距离: ${facility.distance}`)
-                .addTo(map);
+            // 检查地图是否已初始化
+            if (!map) {
+                console.error('地图未初始化，无法显示设施');
+                return;
+            }
             
-            marker.openPopup();
-            map.setView([facility.location.lat, facility.location.lng], 15);
-            
-            markers[tempId] = marker;
+            try {
+                // 在地图上添加临时标记
+                const tempId = 'temp_' + Date.now();
+                const marker = L.marker([facility.location.lat, facility.location.lng])
+                    .bindPopup(`<b>${facility.name}</b><br>${facility.address}<br>距离: ${Math.round(facility.distance)}米`)
+                    .addTo(map);
+                
+                marker.openPopup();
+                map.setView([facility.location.lat, facility.location.lng], 15);
+                
+                markers[tempId] = marker;
+            } catch (error) {
+                console.error('在地图上显示设施时出错:', error);
+            }
         },
         
         // 认证相关方法
-        async checkAuthentication() {
+        async checkAuthentication(isInitialLoad = false) {
             // 检查localStorage中是否有token和用户信息
             const token = localStorage.getItem('token');
             const userJson = localStorage.getItem('user');
             
             if (token && userJson) {
                 try {
-                    this.isLoggedIn = true;
-                    this.currentUser = JSON.parse(userJson);
+                    const userData = JSON.parse(userJson);
+                    
+                    // 验证token是否有效 (传入 isInitialLoad)
+                    const isValid = await this.verifyTokenValidity(isInitialLoad);
+                    
+                    if (isValid) {
+                        this.isLoggedIn = true;
+                        this.currentUser = userData;
+                        // 加载API密钥
+                        await this.loadApiKeys();
+                    } else {
+                        // Token无效，确保状态为未登录
+                        this.isLoggedIn = false;
+                        this.currentUser = null;
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('user');
+                        localStorage.removeItem('apiKey'); // 也清除API Key
+                    }
                 } catch (error) {
-                    console.error('解析用户信息出错:', error);
+                    console.error('解析用户信息或验证Token出错:', error);
                     this.isLoggedIn = false;
                     this.currentUser = null;
                     localStorage.removeItem('token');
                     localStorage.removeItem('user');
+                    localStorage.removeItem('apiKey');
                 }
+            } else {
+                 // 没有token或用户信息，确保是未登录状态
+                 this.isLoggedIn = false;
+                 this.currentUser = null;
+            }
+            
+            // 在Vue.js的下一个更新周期中加载POI数据
+            // 这样可以确保地图组件已经完成挂载
+            this.$nextTick(() => {
+                console.log('加载POI数据（在nextTick中）');
+                this.loadPOIs();
+            });
+        },
+        
+        // 开始定期检查token有效性的定时器
+        startTokenValidationInterval() {
+            // 每5分钟检查一次token和API密钥
+            this.tokenValidationInterval = setInterval(async () => {
+                if (this.isLoggedIn) {
+                    try {
+                        // 定时验证token和API密钥 (传入 isInitialLoad = false)
+                        await this.verifyTokenValidity(false);
+                        await this.verifyApiKeyValidity();
+                    } catch (error) {
+                        console.error('Token验证定时器出错:', error);
+                    }
+                }
+            }, 5 * 60 * 1000); // 5分钟
+        },
+        
+        // 验证token有效性
+        async verifyTokenValidity(isInitialLoad = false) {
+            const token = localStorage.getItem('token');
+            if (!token) return false;
+            
+            try {
+                // 验证token是否有效
+                await axios.get(`${API_BASE_URL}/users/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                console.log("Token is valid.");
+                return true;
+            } catch (error) {
+                // 如果是401错误，表示token无效或过期
+                if (error.response && error.response.status === 401) {
+                    console.log("Token invalid or expired.");
+                    // 清除登录信息
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    localStorage.removeItem('apiKey');
+                    this.isLoggedIn = false;
+                    this.currentUser = null;
+                    this.apiKeys = []; // 清空API密钥列表
+                    
+                    // 只有在非初始加载时才提示并弹出登录框
+                    if (!isInitialLoad) {
+                        this.$message.warning('登录已过期，请重新登录');
+                        this.showLoginDialog = true;
+                    }
+                } else {
+                    // 其他错误
+                    console.error("Error verifying token validity:", error);
+                }
+                return false;
+            }
+        },
+        
+        // 验证API密钥有效性
+        async verifyApiKeyValidity() {
+            const apiKey = localStorage.getItem('apiKey');
+            if (!apiKey) return false;
+            
+            try {
+                // 使用API密钥查询POI列表来验证密钥是否有效
+                await axios.get(`${API_BASE_URL}/pois/?page=1&size=1`, {
+                    headers: {
+                        'X-API-Key': apiKey
+                    }
+                });
+                return true;
+            } catch (error) {
+                // 如果是401或403错误，表示API密钥无效或过期
+                if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+                    console.log('API密钥无效或已过期，尝试刷新密钥');
+                    
+                    // 尝试刷新密钥
+                    await this.refreshApiKey();
+                }
+                return false;
+            }
+        },
+        
+        // 刷新API密钥
+        async refreshApiKey() {
+            // 检查用户是否已登录
+            if (!this.isLoggedIn || !localStorage.getItem('token')) {
+                return;
+            }
+            
+            try {
+                // 调用刷新API密钥接口
+                const token = localStorage.getItem('token');
+                const response = await axios.post(`${API_BASE_URL}/auth/refresh-apikey`, {}, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (response.data && response.data.key) {
+                    console.log('成功刷新API密钥');
+                    // 保存新的API密钥
+                    localStorage.setItem('apiKey', response.data.key);
+                    
+                    // 更新密钥列表
+                    await this.loadApiKeys();
+                    return true;
+                }
+                
+                // 如果响应中没有密钥，尝试加载现有密钥或创建新密钥
+                await this.loadApiKeys();
+                
+                // 如果没有有效的API密钥，创建一个新的
+                if (this.apiKeys.length === 0 || !this.apiKeys.some(k => k.is_active)) {
+                    await this.createApiKey();
+                    this.$message.success('已自动创建新的API密钥');
+                }
+                
+                return true;
+            } catch (error) {
+                console.error('刷新API密钥失败:', error);
+                return false;
             }
         },
         
@@ -768,10 +1220,64 @@ const app = new Vue({
                     this.showApiKeyDialog = true;
                     this.loadApiKeys();
                     break;
+                case 'admin':
+                    this.openAdminPanel();
+                    break;
                 case 'logout':
                     this.logout();
                     break;
             }
+        },
+        
+        // 管理员面板功能
+        openAdminPanel() {
+            this.showAdminDialog = true;
+            this.loadAdminData();
+        },
+        
+        async loadAdminData() {
+            if (!this.currentUser || this.currentUser.role !== 'admin') {
+                this.$message.warning('您没有管理员权限');
+                return;
+            }
+            
+            this.adminLoading = true;
+            
+            try {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    this.$message.warning('未登录或登录已过期');
+                    return;
+                }
+                
+                // 根据当前管理部分加载数据
+                if (this.adminSection === 'users') {
+                    // 加载用户列表
+                    const response = await axios.get(`${API_BASE_URL}/users`, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    this.adminUsers = response.data;
+                } else if (this.adminSection === 'pois') {
+                    // 加载POI列表，这里简化为使用已有的POI数据
+                    const response = await axios.get(`${API_BASE_URL}/pois?page=1&size=50`, {
+                        headers: {
+                            'X-API-Key': localStorage.getItem('apiKey')
+                        }
+                    });
+                    this.adminPOIs = response.data.items;
+                }
+            } catch (error) {
+                this.handleApiError(error);
+            } finally {
+                this.adminLoading = false;
+            }
+        },
+        
+        changeAdminSection(section) {
+            this.adminSection = section;
+            this.loadAdminData();
         },
         
         // API密钥管理
@@ -813,7 +1319,10 @@ const app = new Vue({
                 const response = await axios.post(`${API_BASE_URL}/auth/apikey`, {}, {
                     headers: {
                         'Authorization': `Bearer ${token}`
-                    }
+                    },
+                    // 添加超时设置和重试次数
+                    timeout: 10000, // 10秒超时
+                    retry: 2, // 重试2次
                 });
                 
                 // 添加到列表
@@ -826,7 +1335,17 @@ const app = new Vue({
                 this.$message.success('API密钥创建成功');
                 
             } catch (error) {
-                this.handleApiError(error);
+                // 如果是token过期导致的错误
+                if (error.response && error.response.status === 401) {
+                    // 尝试刷新token
+                    const valid = await this.verifyTokenValidity();
+                    if (valid) {
+                        // token有效，重试创建API密钥
+                        this.createApiKey();
+                    }
+                } else {
+                    this.handleApiError(error);
+                }
             } finally {
                 this.apiKeyLoading = false;
             }

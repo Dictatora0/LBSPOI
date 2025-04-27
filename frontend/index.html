@@ -4,8 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>POI信息服务系统</title>
+    <!-- 先加载Leaflet库 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A==" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
+    
+    <!-- 然后加载Vue和Element UI -->
     <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.css" />
     <link rel="stylesheet" href="/static/styles.css">
     <style>
         body {
@@ -102,6 +106,41 @@
             max-width: 350px;
             margin: 0 auto;
         }
+        
+        /* 地图加载和错误样式 */
+        .map-loading-overlay, .map-error-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+        }
+        
+        .map-loading-indicator, .map-error-message {
+            background-color: white;
+            padding: 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        .map-loading-indicator i, .map-error-message i {
+            font-size: 24px;
+            margin-right: 8px;
+        }
+        
+        .map-error-message i {
+            color: #F56C6C;
+        }
+        
+        .map-error-message button {
+            margin-top: 10px;
+        }
     </style>
 </head>
 <body>
@@ -124,8 +163,9 @@
                             <i class="el-icon-user"></i>
                         </span>
                         <el-dropdown-menu slot="dropdown">
-                            <el-dropdown-item command="profile">个人信息</el-dropdown-item>
+                            <el-dropdown-item command="profile">个人资料</el-dropdown-item>
                             <el-dropdown-item command="apikeys">API密钥管理</el-dropdown-item>
+                            <el-dropdown-item command="admin" v-if="currentUser && currentUser.role === 'admin'">管理员功能</el-dropdown-item>
                             <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
                         </el-dropdown-menu>
                     </el-dropdown>
@@ -222,6 +262,23 @@
             <div class="map-container">
                 <div id="map"></div>
                 
+                <!-- 地图加载状态 -->
+                <div v-if="!mapInitialized && !mapError" class="map-loading-overlay">
+                    <div class="map-loading-indicator">
+                        <i class="el-icon-loading"></i>
+                        <span>正在加载地图...</span>
+                    </div>
+                </div>
+                
+                <!-- 地图错误提示 -->
+                <div v-if="mapError" class="map-error-overlay">
+                    <div class="map-error-message">
+                        <i class="el-icon-warning"></i>
+                        <span>{{ mapError }}</span>
+                        <el-button size="small" type="primary" @click="safeInitMap">重试</el-button>
+                    </div>
+                </div>
+                
                 <div class="map-tools">
                     <el-button-group>
                         <el-button size="small" icon="el-icon-aim" @click="centerMap">居中</el-button>
@@ -315,7 +372,7 @@
                     <el-table-column prop="is_active" label="状态" width="80">
                         <template slot-scope="scope">
                             <el-tag :type="scope.row.is_active ? 'success' : 'danger'">
-                                {% if scope.row.is_active %}有效{% else %}已停用{% endif %}
+                                {{ scope.row.is_active ? '有效' : '已停用' }}
                             </el-tag>
                         </template>
                     </el-table-column>
@@ -336,7 +393,14 @@
                     <el-input v-model="nearbyKeyword" placeholder="如: 餐厅, 厕所, 停车场"></el-input>
                 </el-form-item>
                 <el-form-item label="半径(米)">
-                    <el-slider v-model="nearbyRadius" :min="100" :max="5000" :step="100"></el-slider>
+                    <div style="display: flex; flex-direction: column; width: 100%;">
+                        <div style="display: flex; align-items: center; width: 100%; margin-bottom: 5px;">
+                            <el-slider v-model="nearbyRadius" :min="100" :max="5000" :step="100" style="width: 100%; padding: 10px 0;"></el-slider>
+                        </div>
+                        <div style="text-align: center; font-size: 14px; color: #606266;">
+                            当前半径: <strong>{{ nearbyRadius }}</strong> 米
+                        </div>
+                    </div>
                 </el-form-item>
                 <el-form-item>
                     <el-button type="primary" @click="searchNearby" :loading="nearbyLoading">查询</el-button>
@@ -358,6 +422,82 @@
                     </template>
                 </el-table-column>
             </el-table>
+        </el-dialog>
+        
+        <!-- 管理员功能对话框 -->
+        <el-dialog title="管理员控制面板" :visible.sync="showAdminDialog" width="80%" top="5vh">
+            <el-tabs v-model="adminSection" @tab-click="changeAdminSection">
+                <el-tab-pane label="用户管理" name="users">
+                    <el-table :data="adminUsers" style="width: 100%" v-loading="adminLoading">
+                        <el-table-column prop="id" label="ID" width="60"></el-table-column>
+                        <el-table-column prop="username" label="用户名" width="120"></el-table-column>
+                        <el-table-column prop="email" label="邮箱" width="180"></el-table-column>
+                        <el-table-column prop="role" label="角色" width="100">
+                            <template slot-scope="scope">
+                                <el-tag :type="scope.row.role === 'admin' ? 'danger' : 'success'">
+                                    {{ scope.row.role === 'admin' ? '管理员' : '普通用户' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="is_active" label="状态" width="80">
+                            <template slot-scope="scope">
+                                <el-tag :type="scope.row.is_active ? 'success' : 'info'">
+                                    {{ scope.row.is_active ? '正常' : '已禁用' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="created_at" label="创建时间" width="180">
+                            <template slot-scope="scope">
+                                {{ formatDate(scope.row.created_at) }}
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="操作">
+                            <template slot-scope="scope">
+                                <el-button type="text" size="small">
+                                    {{ scope.row.role === 'admin' ? '降为普通用户' : '提升为管理员' }}
+                                </el-button>
+                                <el-button type="text" size="small" :type="scope.row.is_active ? 'danger' : 'success'">
+                                    {{ scope.row.is_active ? '禁用' : '启用' }}
+                                </el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+                <el-tab-pane label="POI管理" name="pois">
+                    <div style="margin-bottom: 20px;">
+                        <el-button type="primary" size="small">创建新POI</el-button>
+                    </div>
+                    <el-table :data="adminPOIs" style="width: 100%" v-loading="adminLoading">
+                        <el-table-column prop="id" label="ID" width="60"></el-table-column>
+                        <el-table-column prop="name" label="名称" width="180"></el-table-column>
+                        <el-table-column prop="province" label="省份" width="100"></el-table-column>
+                        <el-table-column prop="city" label="城市" width="100"></el-table-column>
+                        <el-table-column prop="category" label="类别" width="120"></el-table-column>
+                        <el-table-column prop="level" label="等级" width="80"></el-table-column>
+                        <el-table-column label="操作">
+                            <template slot-scope="scope">
+                                <el-button type="text" size="small">编辑</el-button>
+                                <el-button type="text" size="small" type="danger">删除</el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+                <el-tab-pane label="系统设置" name="settings">
+                    <el-form label-width="120px">
+                        <el-form-item label="API密钥有效期">
+                            <el-input-number :min="1" :max="365" :step="1" value="30"></el-input-number>
+                            <span class="el-form-item__description">天</span>
+                        </el-form-item>
+                        <el-form-item label="访问令牌有效期">
+                            <el-input-number :min="5" :max="1440" :step="5" value="60"></el-input-number>
+                            <span class="el-form-item__description">分钟</span>
+                        </el-form-item>
+                        <el-form-item>
+                            <el-button type="primary">保存设置</el-button>
+                        </el-form-item>
+                    </el-form>
+                </el-tab-pane>
+            </el-tabs>
         </el-dialog>
     </div>
     {% endraw %}

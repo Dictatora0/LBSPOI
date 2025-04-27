@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, datetime
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -125,7 +125,7 @@ async def create_api_key(
     current_user: models.User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """为当前用户创建API密钥"""
+    """创建新的API密钥"""
     # 根据用户角色设置不同的请求限制
     rate_limit = (
         settings.ADMIN_RATE_LIMIT 
@@ -133,6 +133,37 @@ async def create_api_key(
         else settings.DEFAULT_RATE_LIMIT
     )
     
+    # 创建新的API密钥
+    api_key = crud.create_api_key(db=db, user_id=current_user.id, rate_limit=rate_limit)
+    return api_key
+
+@router.post("/refresh-apikey", response_model=schemas.APIKey)
+async def refresh_apikey(
+    current_user: models.User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """刷新API密钥（自动创建新密钥或重新激活旧密钥）"""
+    # 获取用户现有的API密钥
+    existing_keys = crud.get_user_api_keys(db, current_user.id)
+    
+    # 如果有任何未激活的密钥，先尝试重新激活第一个
+    inactive_keys = [key for key in existing_keys if not key.is_active]
+    if inactive_keys:
+        key_to_activate = inactive_keys[0]
+        key_to_activate.is_active = True
+        key_to_activate.last_used_at = datetime.utcnow()
+        db.commit()
+        db.refresh(key_to_activate)
+        return key_to_activate
+    
+    # 根据用户角色设置不同的请求限制
+    rate_limit = (
+        settings.ADMIN_RATE_LIMIT 
+        if current_user.role == models.UserRole.ADMIN 
+        else settings.DEFAULT_RATE_LIMIT
+    )
+    
+    # 否则创建新密钥
     return crud.create_api_key(db=db, user_id=current_user.id, rate_limit=rate_limit)
 
 @router.get("/apikeys", response_model=List[schemas.APIKey])
