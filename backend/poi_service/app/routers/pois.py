@@ -86,6 +86,8 @@ async def get_pois_in_bounding_box(
 ):
     """
     获取指定边界框内的POI
+    支持通过q参数搜索特定名称的POI
+    支持各种筛选条件
     """
     offset = (page - 1) * size
     result = crud.get_pois_in_bounding_box(
@@ -94,6 +96,11 @@ async def get_pois_in_bounding_box(
         min_lat=bbox.min_lat,
         max_lng=bbox.max_lng,
         max_lat=bbox.max_lat,
+        q=bbox.q,
+        province=bbox.province,
+        city=bbox.city,
+        category=bbox.category,
+        level=bbox.level,
         offset=offset,
         limit=size
     )
@@ -119,6 +126,8 @@ async def get_pois_in_radius(
 ):
     """
     获取指定半径范围内的POI
+    支持通过q参数搜索特定名称的POI
+    支持各种筛选条件
     """
     offset = (page - 1) * size
     result = crud.get_pois_in_radius(
@@ -126,6 +135,11 @@ async def get_pois_in_radius(
         center_lng=radius_query.center_lng,
         center_lat=radius_query.center_lat,
         radius=radius_query.radius,
+        q=radius_query.q,
+        province=radius_query.province,
+        city=radius_query.city,
+        category=radius_query.category,
+        level=radius_query.level,
         offset=offset,
         limit=size
     )

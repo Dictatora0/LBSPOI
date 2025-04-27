@@ -385,34 +385,42 @@ const app = new Vue({
                 
                 map.boxZoom.disable();  // 禁用默认的框选缩放
                 
-                let startPoint;
+                let startPoint = null;
+                let isDrawing = false;
+                
+                // 首先移除可能已存在的事件处理器
+                map.off('mousedown');
+                map.off('mousemove');
+                map.off('mouseup');
+                
                 const onMouseDown = (e) => {
+                    // 确保是左键点击
+                    if (e.originalEvent.button !== 0) return;
+                    
+                    isDrawing = true;
                     startPoint = e.latlng;
                     
-                    // 添加mousemove和mouseup监听
-                    map.on('mousemove', onMouseMove);
-                    map.on('mouseup', onMouseUp);
-                    
-                    // 防止事件冒泡
+                    // 防止事件冒泡和默认行为
                     L.DomEvent.preventDefault(e.originalEvent);
                     L.DomEvent.stopPropagation(e.originalEvent);
                 };
                 
                 const onMouseMove = (e) => {
+                    if (!isDrawing || !startPoint) return;
+                    
                     if (currentBoxSelect) {
                         map.removeLayer(currentBoxSelect);
                     }
                     
                     // 绘制矩形
                     const bounds = L.latLngBounds(startPoint, e.latlng);
-                    currentBoxSelect = L.rectangle(bounds, {color: '#3388ff', weight: 1}).addTo(map);
+                    currentBoxSelect = L.rectangle(bounds, {color: '#3388ff', weight: 2, fillOpacity: 0.2}).addTo(map);
                 };
                 
                 const onMouseUp = (e) => {
-                    // 移除事件监听
-                    map.off('mousemove', onMouseMove);
-                    map.off('mouseup', onMouseUp);
-                    map.off('mousedown', onMouseDown);
+                    if (!isDrawing) return;
+                    
+                    isDrawing = false;
                     
                     // 获取边界框
                     if (currentBoxSelect) {
@@ -427,12 +435,19 @@ const app = new Vue({
                         );
                     }
                     
+                    // 移除事件监听
+                    map.off('mousemove', onMouseMove);
+                    map.off('mouseup', onMouseUp);
+                    
                     // 启用默认的框选缩放
                     map.boxZoom.enable();
                 };
                 
-                // 添加mousedown监听
+                // 添加事件监听
                 map.on('mousedown', onMouseDown);
+                map.on('mousemove', onMouseMove);
+                map.on('mouseup', onMouseUp);
+                
             } catch (error) {
                 console.error('激活框选功能时出错:', error);
                 // 确保恢复默认的框选缩放
@@ -455,38 +470,72 @@ const app = new Vue({
                 // 初始化半径选择
                 this.$message.info('请在地图上点击中心点，然后拖动确定半径');
                 
-                let centerPoint;
+                // 移除可能存在的事件处理器
+                map.off('click');
+                map.off('mousemove');
+                
+                let centerPoint = null;
+                let isSelectingRadius = false;
                 
                 const onClick = (e) => {
+                    if (isSelectingRadius) {
+                        // 如果已经在选择半径，则这是第二次点击
+                        onSecondClick(e);
+                        return;
+                    }
+                    
                     centerPoint = e.latlng;
+                    isSelectingRadius = true;
                     
                     // 添加中心点标记
                     currentRadiusMarker = L.marker(centerPoint).addTo(map);
                     
                     // 初始化半径为0
-                    currentRadiusSelect = L.circle(centerPoint, {radius: 0, color: '#3388ff'}).addTo(map);
-                    
-                    // 切换为拖动模式
-                    map.off('click', onClick);
-                    map.on('mousemove', onMouseMove);
-                    map.on('click', onSecondClick);
+                    currentRadiusSelect = L.circle(centerPoint, {
+                        radius: 0, 
+                        color: '#3388ff',
+                        fillOpacity: 0.15,
+                        weight: 2
+                    }).addTo(map);
                 };
                 
                 const onMouseMove = (e) => {
-                    if (!centerPoint || !currentRadiusSelect) return;
+                    if (!isSelectingRadius || !centerPoint || !currentRadiusSelect) return;
                     
                     // 计算半径（米）
                     const radius = centerPoint.distanceTo(e.latlng);
                     
                     // 更新圆形半径
                     currentRadiusSelect.setRadius(radius);
+                    
+                    // 添加半径标签
+                    if (currentRadiusSelect._radiusLabel) {
+                        map.removeLayer(currentRadiusSelect._radiusLabel);
+                    }
+                    
+                    currentRadiusSelect._radiusLabel = L.marker(e.latlng, {
+                        icon: L.divIcon({
+                            className: 'radius-label',
+                            html: `<div style="background-color: white; padding: 3px 5px; border-radius: 3px; border: 1px solid #3388ff;">${Math.round(radius)}米</div>`,
+                            iconSize: [60, 20],
+                            iconAnchor: [30, 10]
+                        })
+                    }).addTo(map);
                 };
                 
                 const onSecondClick = (e) => {
-                    if (!centerPoint) return;
+                    if (!isSelectingRadius || !centerPoint) return;
+                    
+                    isSelectingRadius = false;
                     
                     // 计算最终半径（米）
                     const radius = centerPoint.distanceTo(e.latlng);
+                    
+                    // 移除半径标签
+                    if (currentRadiusSelect && currentRadiusSelect._radiusLabel) {
+                        map.removeLayer(currentRadiusSelect._radiusLabel);
+                        delete currentRadiusSelect._radiusLabel;
+                    }
                     
                     // 查询此范围内的POI
                     this.queryPOIsByRadius(
@@ -497,11 +546,12 @@ const app = new Vue({
                     
                     // 移除事件监听
                     map.off('mousemove', onMouseMove);
-                    map.off('click', onSecondClick);
+                    map.off('click', onClick);
                 };
                 
-                // 添加click监听
+                // 添加事件监听
                 map.on('click', onClick);
+                map.on('mousemove', onMouseMove);
             } catch (error) {
                 console.error('激活半径选择功能时出错:', error);
                 
@@ -775,13 +825,26 @@ const app = new Vue({
                     return;
                 }
                 
-                // 发送边界框查询请求
-                const response = await axios.post(`${API_BASE_URL}/pois/bbox`, {
+                // 准备请求参数
+                const params = {
                     min_lat: minLat,
                     min_lng: minLng,
                     max_lat: maxLat,
                     max_lng: maxLng
-                }, {
+                };
+                
+                // 如果有搜索关键词，则一并传递
+                if (this.searchQuery.trim() !== '') {
+                    params.q = this.searchQuery.trim();
+                }
+                
+                // 如果有筛选条件，也一并传递
+                if (this.filterForm.province) params.province = this.filterForm.province;
+                if (this.filterForm.category) params.category = this.filterForm.category;
+                if (this.filterForm.level) params.level = this.filterForm.level;
+                
+                // 发送边界框查询请求
+                const response = await axios.post(`${API_BASE_URL}/pois/bbox`, params, {
                     headers: {
                         'X-API-Key': apiKey
                     }
@@ -812,12 +875,25 @@ const app = new Vue({
                     return;
                 }
                 
-                // 发送半径查询请求
-                const response = await axios.post(`${API_BASE_URL}/pois/radius`, {
+                // 准备请求参数
+                const params = {
                     center_lat: centerLat,
                     center_lng: centerLng,
                     radius: radius
-                }, {
+                };
+                
+                // 如果有搜索关键词，则一并传递
+                if (this.searchQuery.trim() !== '') {
+                    params.q = this.searchQuery.trim();
+                }
+                
+                // 如果有筛选条件，也一并传递
+                if (this.filterForm.province) params.province = this.filterForm.province;
+                if (this.filterForm.category) params.category = this.filterForm.category;
+                if (this.filterForm.level) params.level = this.filterForm.level;
+                
+                // 发送半径查询请求
+                const response = await axios.post(`${API_BASE_URL}/pois/radius`, params, {
                     headers: {
                         'X-API-Key': apiKey
                     }

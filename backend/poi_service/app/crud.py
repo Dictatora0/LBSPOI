@@ -170,9 +170,20 @@ def search_pois_by_name(db: Session, name_query: str, offset: int = 0, limit: in
     
     return {"items": items, "total": total}
 
-def get_pois_in_bounding_box(db: Session, min_lng: float, min_lat: float, 
-                            max_lng: float, max_lat: float, 
-                            offset: int = 0, limit: int = 100):
+def get_pois_in_bounding_box(
+    db: Session, 
+    min_lng: float, 
+    min_lat: float, 
+    max_lng: float, 
+    max_lat: float, 
+    q: Optional[str] = None,
+    province: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    level: Optional[str] = None,
+    offset: int = 0, 
+    limit: int = 100
+):
     query = db.query(models.POI).filter(
         models.POI.longitude >= min_lng,
         models.POI.longitude <= max_lng,
@@ -180,13 +191,39 @@ def get_pois_in_bounding_box(db: Session, min_lng: float, min_lat: float,
         models.POI.latitude <= max_lat
     )
     
+    # 添加搜索条件
+    if q:
+        search_pattern = f"%{q}%"
+        query = query.filter(models.POI.name.like(search_pattern))
+    
+    # 添加筛选条件
+    if province:
+        query = query.filter(models.POI.province == province)
+    if city:
+        query = query.filter(models.POI.city == city)
+    if category:
+        query = query.filter(models.POI.category == category)
+    if level:
+        query = query.filter(models.POI.level == level)
+    
     total = query.count()
     items = query.offset(offset).limit(limit).all()
     
     return {"items": items, "total": total}
 
-def get_pois_in_radius(db: Session, center_lng: float, center_lat: float, 
-                      radius: float, offset: int = 0, limit: int = 100):
+def get_pois_in_radius(
+    db: Session, 
+    center_lng: float, 
+    center_lat: float, 
+    radius: float, 
+    q: Optional[str] = None,
+    province: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    level: Optional[str] = None,
+    offset: int = 0, 
+    limit: int = 100
+):
     # 使用简化的距离计算 (平面欧氏距离，适用于小范围)
     # 实际应用中应使用Haversine公式或地理空间扩展
     query = db.query(models.POI).filter(
@@ -195,6 +232,21 @@ def get_pois_in_radius(db: Session, center_lng: float, center_lat: float,
             func.pow(models.POI.latitude - center_lat, 2)
         ) <= radius / 111000  # 转换为经纬度距离 (约 111km/度)
     )
+    
+    # 添加搜索条件
+    if q:
+        search_pattern = f"%{q}%"
+        query = query.filter(models.POI.name.like(search_pattern))
+    
+    # 添加筛选条件
+    if province:
+        query = query.filter(models.POI.province == province)
+    if city:
+        query = query.filter(models.POI.city == city)
+    if category:
+        query = query.filter(models.POI.category == category)
+    if level:
+        query = query.filter(models.POI.level == level)
     
     total = query.count()
     items = query.offset(offset).limit(limit).all()

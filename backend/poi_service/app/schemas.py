@@ -106,11 +106,21 @@ class BoundingBoxQuery(BaseModel):
     min_lat: float = Field(..., description="最小纬度")
     max_lng: float = Field(..., description="最大经度")
     max_lat: float = Field(..., description="最大纬度")
+    q: Optional[str] = Field(None, description="搜索关键词")
+    province: Optional[str] = Field(None, description="省份筛选")
+    city: Optional[str] = Field(None, description="城市筛选")
+    category: Optional[str] = Field(None, description="类别筛选")
+    level: Optional[str] = Field(None, description="等级筛选")
 
 class RadiusQuery(BaseModel):
     center_lng: float = Field(..., description="中心点经度")
     center_lat: float = Field(..., description="中心点纬度")
     radius: float = Field(..., description="半径（米）")
+    q: Optional[str] = Field(None, description="搜索关键词")
+    province: Optional[str] = Field(None, description="省份筛选")
+    city: Optional[str] = Field(None, description="城市筛选")
+    category: Optional[str] = Field(None, description="类别筛选")
+    level: Optional[str] = Field(None, description="等级筛选")
 
 # 响应模式
 class ErrorResponse(BaseModel):
