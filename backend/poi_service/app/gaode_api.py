@@ -8,12 +8,21 @@ from app.errors import APIError, ErrorCode
 # 高德地图API基础URL
 GAODE_API_BASE_URL = "https://restapi.amap.com/v3"
 
-async def _make_request(endpoint: str, params: Dict[str, Any]) -> Dict:
+async def _make_request(endpoint: str, params: Dict[str, Any], api_key: Optional[str] = None) -> Dict:
     """发送请求到高德地图API"""
     try:
-        # 添加API密钥到参数
-        params["key"] = settings.GAODE_API_KEY
-        
+        # 使用指定的API密钥或默认配置
+        if api_key:
+            params["key"] = api_key
+        elif settings.GAODE_API_KEY:
+            params["key"] = settings.GAODE_API_KEY
+        else:
+            raise APIError(
+                code=ErrorCode.MAP_SERVICE_ERROR,
+                message="未配置高德地图API密钥",
+                details={"error": "Missing Gaode API key"}
+            )
+            
         # 发送请求并确保响应使用UTF-8编码
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -54,7 +63,8 @@ async def get_nearby_facilities(
     longitude: float,
     keyword: str,
     radius: int = 1000,
-    types: Optional[str] = None
+    types: Optional[str] = None,
+    amap_key: Optional[str] = None
 ) -> Dict:
     """查询周边设施"""
     params = {
@@ -68,11 +78,12 @@ async def get_nearby_facilities(
     if types:
         params["types"] = types
         
-    return await _make_request("place/around", params)
+    return await _make_request("place/around", params, api_key=amap_key)
 
 async def geocode(
     address: str, 
-    city: Optional[str] = None
+    city: Optional[str] = None,
+    amap_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     将地址转换为坐标
@@ -88,12 +99,13 @@ async def geocode(
     if city:
         params["city"] = city
         
-    return await _make_request("geocode/geo", params)
+    return await _make_request("geocode/geo", params, api_key=amap_key)
 
 async def reverse_geocode(
     longitude: float, 
     latitude: float, 
-    extensions: str = "base"
+    extensions: str = "base",
+    amap_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     将坐标转换为地址
@@ -108,7 +120,7 @@ async def reverse_geocode(
         "output": "json"
     }
     
-    data = await _make_request("geocode/regeo", params)
+    data = await _make_request("geocode/regeo", params, api_key=amap_key)
     return data.get("regeocode", {})
 
 async def get_route(
@@ -116,7 +128,8 @@ async def get_route(
     origin_latitude: float,
     destination_longitude: float,
     destination_latitude: float,
-    mode: str = "walking"  # walking, driving, transit, bicycling
+    mode: str = "walking",  # walking, driving, transit, bicycling
+    amap_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     获取路径规划
@@ -133,7 +146,7 @@ async def get_route(
         "output": "json"
     }
     
-    data = await _make_request(f"direction/{mode}", params)
+    data = await _make_request(f"direction/{mode}", params, api_key=amap_key)
     
     # 不同的模式返回不同结构的数据
     if mode == "walking":

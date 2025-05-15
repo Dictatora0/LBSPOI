@@ -41,6 +41,7 @@ const app = new Vue({
         mapInitialized: false,
         mapLoading: true,
         mapError: null,
+        mapToolsExpanded: true, // 地图工具栏是否展开
         
         // 地图相关
         pois: [],
@@ -66,6 +67,7 @@ const app = new Vue({
         currentUser: null,  // 确保初始值为null
         showLoginDialog: false,
         showRegisterDialog: false,
+        showProfileDialog: false,
         loginForm: {
             username: '',
             password: ''
@@ -76,8 +78,16 @@ const app = new Vue({
             password: '',
             confirmPassword: ''
         },
+        profileForm: {
+            username: '',
+            email: '',
+            currentPassword: '',
+            newPassword: '',
+            confirmNewPassword: ''
+        },
         loginLoading: false,
         registerLoading: false,
+        profileLoading: false,
         
         // API密钥管理
         showApiKeyDialog: false,
@@ -90,6 +100,22 @@ const app = new Vue({
         adminUsers: [],
         adminPOIs: [],
         adminLoading: false,
+        
+        // 添加POI
+        showAddPoiDialog: false,
+        newPoiForm: {
+            name: '',
+            category: '',
+            level: '',
+            province: '',
+            city: '',
+            address: '',
+            description: '',
+            latitude: null,
+            longitude: null
+        },
+        addPoiLoading: false,
+        poiMarkedLocation: null,
         
         // 周边设施查询
         showNearbyDialog: false,
@@ -381,7 +407,7 @@ const app = new Vue({
                 this.clearSelectionLayers();
                 
                 // 初始化边界框选择
-                this.$message.info('请在地图上拖动鼠标框选区域');
+                this.$message.info('请点击地图确定框选起点，移动鼠标后再次点击确定终点');
                 
                 map.boxZoom.disable();  // 禁用默认的框选缩放
                 
@@ -389,20 +415,48 @@ const app = new Vue({
                 let isDrawing = false;
                 
                 // 首先移除可能已存在的事件处理器
-                map.off('mousedown');
+                map.off('click');
                 map.off('mousemove');
-                map.off('mouseup');
                 
-                const onMouseDown = (e) => {
+                const onClick = (e) => {
                     // 确保是左键点击
                     if (e.originalEvent.button !== 0) return;
                     
-                    isDrawing = true;
-                    startPoint = e.latlng;
-                    
-                    // 防止事件冒泡和默认行为
-                    L.DomEvent.preventDefault(e.originalEvent);
-                    L.DomEvent.stopPropagation(e.originalEvent);
+                    if (!isDrawing) {
+                        // 第一次点击，开始绘制
+                        isDrawing = true;
+                        startPoint = e.latlng;
+                        
+                        // 防止事件冒泡和默认行为
+                        L.DomEvent.preventDefault(e.originalEvent);
+                        L.DomEvent.stopPropagation(e.originalEvent);
+                    } else {
+                        // 第二次点击，结束绘制
+                        isDrawing = false;
+                        
+                        // 获取边界框
+                        if (currentBoxSelect) {
+                            const bounds = currentBoxSelect.getBounds();
+                            
+                            // 查询此区域内的POI
+                            this.queryPOIsByBoundingBox(
+                                bounds.getSouth(),
+                                bounds.getWest(),
+                                bounds.getNorth(),
+                                bounds.getEast()
+                            );
+                            
+                            // 确保查询后清除框选图层
+                            this.clearSelectionLayers();
+                        }
+                        
+                        // 移除事件监听
+                        map.off('mousemove', onMouseMove);
+                        map.off('click', onClick);
+                        
+                        // 启用默认的框选缩放
+                        map.boxZoom.enable();
+                    }
                 };
                 
                 const onMouseMove = (e) => {
@@ -417,36 +471,9 @@ const app = new Vue({
                     currentBoxSelect = L.rectangle(bounds, {color: '#3388ff', weight: 2, fillOpacity: 0.2}).addTo(map);
                 };
                 
-                const onMouseUp = (e) => {
-                    if (!isDrawing) return;
-                    
-                    isDrawing = false;
-                    
-                    // 获取边界框
-                    if (currentBoxSelect) {
-                        const bounds = currentBoxSelect.getBounds();
-                        
-                        // 查询此区域内的POI
-                        this.queryPOIsByBoundingBox(
-                            bounds.getSouth(),
-                            bounds.getWest(),
-                            bounds.getNorth(),
-                            bounds.getEast()
-                        );
-                    }
-                    
-                    // 移除事件监听
-                    map.off('mousemove', onMouseMove);
-                    map.off('mouseup', onMouseUp);
-                    
-                    // 启用默认的框选缩放
-                    map.boxZoom.enable();
-                };
-                
                 // 添加事件监听
-                map.on('mousedown', onMouseDown);
+                map.on('click', onClick);
                 map.on('mousemove', onMouseMove);
-                map.on('mouseup', onMouseUp);
                 
             } catch (error) {
                 console.error('激活框选功能时出错:', error);
@@ -544,6 +571,9 @@ const app = new Vue({
                         radius
                     );
                     
+                    // 确保查询后清除选择图层
+                    this.clearSelectionLayers();
+                    
                     // 移除事件监听
                     map.off('mousemove', onMouseMove);
                     map.off('click', onClick);
@@ -601,11 +631,11 @@ const app = new Vue({
                     currentRadiusMarker = null;
                 }
                 
-                // 清除临时点标记
+                // 清除可能存在的半径标签
                 for (const key in markers) {
                     if (key.startsWith('temp_')) {
                         try {
-                            if (markers[key] && markers[key]._map) {
+                            if (markers[key] && map) {
                                 map.removeLayer(markers[key]);
                             }
                             delete markers[key];
@@ -778,8 +808,8 @@ const app = new Vue({
                         return;
                     }
                     
-                    // 发送搜索请求
-                    const response = await axios.get(`${API_BASE_URL}/pois/search?q=${encodeURIComponent(this.searchQuery)}&page=1&size=${this.pageSize}`, {
+                    // 发送搜索请求，确保URL以斜杠结尾
+                    const response = await axios.get(`${API_BASE_URL}/pois/search/?q=${encodeURIComponent(this.searchQuery)}&page=1&size=${this.pageSize}`, {
                         headers: {
                             'X-API-Key': apiKey
                         }
@@ -843,8 +873,11 @@ const app = new Vue({
                 if (this.filterForm.category) params.category = this.filterForm.category;
                 if (this.filterForm.level) params.level = this.filterForm.level;
                 
-                // 发送边界框查询请求
-                const response = await axios.post(`${API_BASE_URL}/pois/bbox`, params, {
+                // 设置加载状态
+                this.loading = true;
+                
+                // 发送边界框查询请求，确保URL以斜杠结尾
+                const response = await axios.post(`${API_BASE_URL}/pois/bbox/`, params, {
                     headers: {
                         'X-API-Key': apiKey
                     }
@@ -858,11 +891,23 @@ const app = new Vue({
                 // 添加标记到地图
                 this.addMarkers(this.pois);
                 
+                // 确保移除选择图层
+                this.clearSelectionLayers();
+                
                 // 显示结果信息
                 this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
                 
+                // 确保DOM更新完成后结束加载状态
+                this.$nextTick(() => {
+                    this.loading = false;
+                });
+                
             } catch (error) {
                 this.handleApiError(error);
+                this.loading = false;
+                
+                // 出错时也需要清除选择图层
+                this.clearSelectionLayers();
             }
         },
         
@@ -892,8 +937,11 @@ const app = new Vue({
                 if (this.filterForm.category) params.category = this.filterForm.category;
                 if (this.filterForm.level) params.level = this.filterForm.level;
                 
-                // 发送半径查询请求
-                const response = await axios.post(`${API_BASE_URL}/pois/radius`, params, {
+                // 设置加载状态
+                this.loading = true;
+                
+                // 发送半径查询请求，确保URL以斜杠结尾
+                const response = await axios.post(`${API_BASE_URL}/pois/radius/`, params, {
                     headers: {
                         'X-API-Key': apiKey
                     }
@@ -907,11 +955,23 @@ const app = new Vue({
                 // 添加标记到地图
                 this.addMarkers(this.pois);
                 
+                // 确保移除选择图层
+                this.clearSelectionLayers();
+                
                 // 显示结果信息
                 this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
                 
+                // 确保DOM更新完成后结束加载状态
+                this.$nextTick(() => {
+                    this.loading = false;
+                });
+                
             } catch (error) {
                 this.handleApiError(error);
+                this.loading = false;
+                
+                // 出错时也需要清除选择图层
+                this.clearSelectionLayers();
             }
         },
         
@@ -964,8 +1024,8 @@ const app = new Vue({
                     return;
                 }
                 
-                // 发送周边设施查询请求
-                const response = await axios.get(`${API_BASE_URL}/map/nearby?poi_id=${this.selectedPOI.id}&keyword=${encodeURIComponent(this.nearbyKeyword)}&radius=${this.nearbyRadius}`, {
+                // 发送周边设施查询请求，添加高德地图API密钥，确保URL以斜杠结尾
+                const response = await axios.get(`${API_BASE_URL}/map/nearby/?poi_id=${this.selectedPOI.id}&keyword=${encodeURIComponent(this.nearbyKeyword)}&radius=${this.nearbyRadius}&amap_key=a97933ac2298539278bfe77e4b80ed82`, {
                     headers: {
                         'X-API-Key': apiKey
                     }
@@ -1019,50 +1079,62 @@ const app = new Vue({
         
         // 认证相关方法
         async checkAuthentication(isInitialLoad = false) {
-            // 检查localStorage中是否有token和用户信息
             const token = localStorage.getItem('token');
             const userJson = localStorage.getItem('user');
             
             if (token && userJson) {
                 try {
-                    const userData = JSON.parse(userJson);
-                    
-                    // 验证token是否有效 (传入 isInitialLoad)
+                    let userData = JSON.parse(userJson);
+                    // 确保本地存储的user对象中的role是小写
+                    if (userData.role) {
+                        userData.role = userData.role.toLowerCase();
+                    }
+
                     const isValid = await this.verifyTokenValidity(isInitialLoad);
                     
                     if (isValid) {
                         this.isLoggedIn = true;
-                        this.currentUser = userData;
-                        // 加载API密钥
+                        // 从 /users/me 接口获取最新数据，并规范化角色
+                        try {
+                            const freshUserResponse = await axios.get(`${API_BASE_URL}/users/me`, {
+                                headers: { 'Authorization': `Bearer ${token}` }
+                            });
+                            let freshUserData = freshUserResponse.data;
+                            if (freshUserData.role) {
+                                freshUserData.role = freshUserData.role.toLowerCase();
+                            }
+                            this.currentUser = freshUserData;
+                            localStorage.setItem('user', JSON.stringify(freshUserData)); // 更新本地存储
+                        } catch (fetchFreshUserError) {
+                            console.error("获取最新用户信息失败，使用本地缓存:", fetchFreshUserError);
+                            // 如果获取最新信息失败，回退到本地解析过的数据
+                            this.currentUser = userData; 
+                        }
                         await this.loadApiKeys();
                     } else {
-                        // Token无效，确保状态为未登录
-                        this.isLoggedIn = false;
-                        this.currentUser = null;
-                        localStorage.removeItem('token');
-                        localStorage.removeItem('user');
-                        localStorage.removeItem('apiKey'); // 也清除API Key
+                        this.logoutCleanup(); // Token无效，执行登出清理
                     }
                 } catch (error) {
                     console.error('解析用户信息或验证Token出错:', error);
-                    this.isLoggedIn = false;
-                    this.currentUser = null;
-                    localStorage.removeItem('token');
-                    localStorage.removeItem('user');
-                    localStorage.removeItem('apiKey');
+                    this.logoutCleanup();
                 }
             } else {
-                 // 没有token或用户信息，确保是未登录状态
                  this.isLoggedIn = false;
                  this.currentUser = null;
             }
             
-            // 在Vue.js的下一个更新周期中加载POI数据
-            // 这样可以确保地图组件已经完成挂载
             this.$nextTick(() => {
-                console.log('加载POI数据（在nextTick中）');
                 this.loadPOIs();
             });
+        },
+        
+        logoutCleanup() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            localStorage.removeItem('apiKey');
+            this.isLoggedIn = false;
+            this.currentUser = null;
+            this.apiKeys = [];
         },
         
         // 开始定期检查token有效性的定时器
@@ -1191,41 +1263,32 @@ const app = new Vue({
             this.$refs.loginForm.validate(async (valid) => {
                 if (valid) {
                     this.loginLoading = true;
-                    
                     try {
-                        // 发送登录请求
                         const response = await axios.post(`${API_BASE_URL}/auth/token`, new URLSearchParams({
                             username: this.loginForm.username,
                             password: this.loginForm.password
                         }), {
-                            headers: {
-                                'Content-Type': 'application/x-www-form-urlencoded'
-                            }
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
                         });
                         
-                        // 保存token
                         localStorage.setItem('token', response.data.access_token);
                         
-                        // 获取用户信息
                         const userResponse = await axios.get(`${API_BASE_URL}/users/me`, {
-                            headers: {
-                                'Authorization': `Bearer ${response.data.access_token}`
-                            }
+                            headers: { 'Authorization': `Bearer ${response.data.access_token}` }
                         });
                         
-                        // 保存用户信息
-                        localStorage.setItem('user', JSON.stringify(userResponse.data));
-                        this.currentUser = userResponse.data;
+                        let userData = userResponse.data;
+                        if (userData.role) {
+                            userData.role = userData.role.toLowerCase(); // 规范化角色
+                        }
+                        localStorage.setItem('user', JSON.stringify(userData));
+                        this.currentUser = userData;
                         this.isLoggedIn = true;
                         
-                        // 加载用户的API密钥
                         await this.loadApiKeys();
-                        
-                        // 关闭登录对话框
                         this.showLoginDialog = false;
-                        
-                        // 提示登录成功
                         this.$message.success('登录成功');
+                        this.loadPOIs(); // 登录成功后重新加载POIs
                         
                     } catch (error) {
                         this.handleApiError(error);
@@ -1270,27 +1333,15 @@ const app = new Vue({
         },
         
         logout() {
-            // 清除本地存储
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            localStorage.removeItem('apiKey');
-            
-            // 重置状态
-            this.isLoggedIn = false;
-            this.currentUser = null;
-            this.apiKeys = [];
-            
-            // 提示登出成功
+            this.logoutCleanup(); // 使用logoutCleanup进行清理
             this.$message.success('已安全退出登录');
-            
-            // 重新加载POI数据
             this.loadPOIs();
         },
         
         handleCommand(command) {
             switch (command) {
                 case 'profile':
-                    // TODO: 用户资料管理
+                    this.openProfileDialog();
                     break;
                 case 'apikeys':
                     this.showApiKeyDialog = true;
@@ -1326,10 +1377,10 @@ const app = new Vue({
                     return;
                 }
                 
-                // 根据当前管理部分加载数据
+                // 根据当前管理部分加载数据，确保所有URL以斜杠结尾
                 if (this.adminSection === 'users') {
                     // 加载用户列表
-                    const response = await axios.get(`${API_BASE_URL}/users`, {
+                    const response = await axios.get(`${API_BASE_URL}/users/`, {
                         headers: {
                             'Authorization': `Bearer ${token}`
                         }
@@ -1337,7 +1388,7 @@ const app = new Vue({
                     this.adminUsers = response.data;
                 } else if (this.adminSection === 'pois') {
                     // 加载POI列表，这里简化为使用已有的POI数据
-                    const response = await axios.get(`${API_BASE_URL}/pois?page=1&size=50`, {
+                    const response = await axios.get(`${API_BASE_URL}/pois/?page=1&size=50`, {
                         headers: {
                             'X-API-Key': localStorage.getItem('apiKey')
                         }
@@ -1348,6 +1399,196 @@ const app = new Vue({
                 this.handleApiError(error);
             } finally {
                 this.adminLoading = false;
+            }
+        },
+        
+        // 添加POI功能
+        openAddPoiDialog() {
+            if (!this.currentUser || this.currentUser.role !== 'admin') {
+                this.$message.warning('只有管理员可以添加POI');
+                return;
+            }
+            
+            // 重置表单
+            this.newPoiForm = {
+                name: '',
+                category: '',
+                level: '',
+                province: '',
+                city: '',
+                address: '',
+                description: '',
+                latitude: null,
+                longitude: null
+            };
+            
+            this.poiMarkedLocation = null;
+            this.showAddPoiDialog = true;
+            
+            this.$message.info('请在地图上点击选择POI位置');
+            
+            // 设置地图点击事件来选择位置
+            if (map) {
+                map.off('click'); // 移除可能存在的其他点击事件
+                map.on('click', this.markPoiLocation);
+            }
+        },
+        
+        markPoiLocation(e) {
+            // 清除之前的标记（如果有）
+            if (this.poiMarkedLocation) {
+                map.removeLayer(this.poiMarkedLocation);
+            }
+            
+            // 创建新标记
+            const latlng = e.latlng;
+            this.poiMarkedLocation = L.marker(latlng).addTo(map);
+            
+            // 更新表单中的经纬度
+            this.newPoiForm.latitude = latlng.lat;
+            this.newPoiForm.longitude = latlng.lng;
+            
+            this.$message.success(`已标记位置: (${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)})`);
+        },
+        
+        closeAddPoiDialog() {
+            // 关闭添加POI对话框，清除地图事件和标记
+            this.showAddPoiDialog = false;
+            
+            if (map) {
+                map.off('click', this.markPoiLocation);
+            }
+            
+            if (this.poiMarkedLocation) {
+                map.removeLayer(this.poiMarkedLocation);
+                this.poiMarkedLocation = null;
+            }
+        },
+        
+        async submitNewPoi() {
+            // 表单验证
+            if (!this.newPoiForm.name.trim()) {
+                this.$message.error('请输入POI名称');
+                return;
+            }
+            
+            if (!this.newPoiForm.latitude || !this.newPoiForm.longitude) {
+                this.$message.error('请在地图上选择POI位置');
+                return;
+            }
+            
+            this.addPoiLoading = true;
+            
+            try {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    this.$message.warning('未登录或登录已过期');
+                    return;
+                }
+                
+                // 发送创建POI请求
+                const response = await axios.post(`${API_BASE_URL}/pois`, this.newPoiForm, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                // 添加成功后，将新POI添加到列表和地图中
+                this.adminPOIs.unshift(response.data);
+                
+                // 如果当前在查看POI列表，则更新标记
+                if (map) {
+                    const newPoi = response.data;
+                    const marker = L.marker([newPoi.latitude, newPoi.longitude])
+                        .bindPopup(`<h3>${newPoi.name}</h3><p>${newPoi.address || '暂无地址'}</p>`)
+                        .addTo(map);
+                    
+                    markers[newPoi.id] = marker;
+                }
+                
+                this.$message.success('POI添加成功');
+                this.closeAddPoiDialog();
+                
+                // 如果当前是在POI管理界面，刷新POI列表
+                if (this.showAdminDialog && this.adminSection === 'pois') {
+                    this.loadAdminData();
+                }
+                
+            } catch (error) {
+                this.handleApiError(error);
+            } finally {
+                this.addPoiLoading = false;
+            }
+        },
+        
+        // 提升用户权限
+        async updateUserRole(userId, newRole) {
+            try {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    this.$message.warning('未登录或登录已过期');
+                    return;
+                }
+                
+                // 转换角色值为正确的枚举值
+                const roleToSend = newRole.toLowerCase() === 'user' ? 'public' : 'admin';
+                
+                // 使用正确的URL格式和请求体
+                await axios.put(`${API_BASE_URL}/users/${userId}/role`, 
+                    { role: roleToSend }, // 使用role字段
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+                
+                const user = this.adminUsers.find(u => u.id === userId);
+                if (user) {
+                    user.role = newRole; 
+                }
+                
+                this.$message.success(`用户角色已更新为 ${newRole === 'user' ? '普通用户' : '管理员'}`);
+
+            } catch (error) {
+                console.error('角色更新错误 (尝试请求体):', error);
+                this.handleApiError(error);
+            }
+        },
+        
+        // 启用或禁用用户
+        async toggleUserStatus(userId, isActive) {
+            try {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    this.$message.warning('未登录或登录已过期');
+                    return;
+                }
+                
+                // 修改为使用is_active字段
+                await axios.put(`${API_BASE_URL}/users/${userId}/status`, 
+                    { is_active: isActive }, // 使用is_active字段
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    }
+                );
+                
+                // 更新本地用户列表
+                const user = this.adminUsers.find(u => u.id === userId);
+                if (user) {
+                    user.is_active = isActive;
+                }
+                
+                const successMessage = isActive ? '启用' : '禁用';
+                this.$message.success(`用户已${successMessage}`);
+
+            } catch (error) {
+                console.error("状态更新错误 (尝试请求体):", error);
+                this.handleApiError(error);
             }
         },
         
@@ -1485,6 +1726,9 @@ const app = new Vue({
                     errorMessage = data.detail; // 处理 FastAPI 验证错误
                 } else if (data && data.detail && data.detail.message) {
                     errorMessage = data.detail.message; // 处理嵌套的错误消息
+                } else if (data && typeof data === 'string') {
+                    // 处理纯文本错误消息
+                    errorMessage = data;
                 }
 
                 if (status === 401) {
@@ -1496,11 +1740,37 @@ const app = new Vue({
                     // 可选：强制弹出登录框
                     // this.showLoginDialog = true;
                 } else if (status === 409) {
-                    // 对于 409 Conflict，我们已经从 data.message 获取了具体原因
-                    // errorMessage = "用户名或邮箱已被使用"; // 这行可以删掉或注释掉
+                    // 处理冲突错误，如已存在的用户名
+                    errorMessage = errorMessage || "资源冲突，可能是用户名或邮箱已被使用";
+                } else if (status === 422) {
+                    // 处理验证错误
+                    errorMessage = "请求参数验证失败";
+                    
+                    // 尝试解析验证错误详情
+                    if (data && data.detail && Array.isArray(data.detail)) {
+                        // FastAPI 验证错误通常是数组形式
+                        const validationErrors = data.detail.map(err => {
+                            if (err.loc && err.loc.length > 1) {
+                                return `${err.loc[1]}: ${err.msg}`;
+                            }
+                            return err.msg;
+                        }).join('; ');
+                        
+                        if (validationErrors) {
+                            errorMessage = `验证错误: ${validationErrors}`;
+                        }
+                    }
+                    
+                    console.warn('验证错误详情:', data);
+                } else if (status === 403) {
+                    errorMessage = '您没有权限执行此操作';
+                } else if (status === 404) {
+                    errorMessage = '请求的资源不存在';
+                } else if (status === 429) {
+                    errorMessage = '请求次数过多，请稍后再试';
+                } else if (status >= 500) {
+                    errorMessage = '服务器内部错误，请稍后再试';
                 }
-                // 可以根据需要添加其他状态码的处理，如 403, 404, 429 等
-
             } else if (error.request) {
                 // 请求已发送，但未收到响应
                 errorMessage = '无法连接到服务器，请检查网络连接';
@@ -1527,6 +1797,124 @@ const app = new Vue({
             } catch (error) {
                 console.error('日期格式化错误:', error);
                 return dateString;
+            }
+        },
+        
+        // 切换地图工具栏展开状态
+        toggleMapTools() {
+            this.mapToolsExpanded = !this.mapToolsExpanded;
+        },
+        
+        // 用户个人资料
+        openProfileDialog() {
+            if (!this.isLoggedIn || !this.currentUser) {
+                this.$message.warning('请先登录');
+                this.showLoginDialog = true;
+                return;
+            }
+            
+            // 初始化个人资料表单
+            this.profileForm = {
+                username: this.currentUser.username,
+                email: this.currentUser.email,
+                currentPassword: '',
+                newPassword: '',
+                confirmNewPassword: ''
+            };
+            
+            this.showProfileDialog = true;
+        },
+        
+        async updateProfile() {
+            this.profileLoading = true;
+            
+            try {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    this.$message.warning('未登录或登录已过期');
+                    this.profileLoading = false;
+                    return;
+                }
+                
+                // 1. 表单验证
+                if (this.profileForm.newPassword && this.profileForm.newPassword !== this.profileForm.confirmNewPassword) {
+                    this.$message.error('两次输入的新密码不一致');
+                    this.profileLoading = false;
+                    return;
+                }
+                
+                if (this.profileForm.newPassword && !this.profileForm.currentPassword) {
+                    this.$message.error('请输入当前密码');
+                    this.profileLoading = false;
+                    return;
+                }
+                
+                const updateData = {};
+                if (this.profileForm.username !== this.currentUser.username) {
+                    updateData.username = this.profileForm.username;
+                }
+                if (this.profileForm.email !== this.currentUser.email) {
+                    updateData.email = this.profileForm.email;
+                }
+                if (this.profileForm.newPassword) {
+                    updateData.password = this.profileForm.newPassword;
+                    updateData.current_password = this.profileForm.currentPassword;
+                }
+                
+                if (Object.keys(updateData).length === 0) {
+                    this.$message.info('没有修改任何内容');
+                    this.profileLoading = false;
+                    this.showProfileDialog = false;
+                    return;
+                }
+                
+                const processResponseData = (data) => {
+                    const updatedUser = { ...this.currentUser, ...data };
+                    // 规范化角色为小写以匹配后端响应模型约束
+                    if (updatedUser.role) {
+                        updatedUser.role = updatedUser.role.toLowerCase();
+                    }
+                    this.currentUser = updatedUser;
+                    localStorage.setItem('user', JSON.stringify(updatedUser));
+                    this.$message.success('个人资料已更新');
+                    this.showProfileDialog = false;
+                };
+
+                try {
+                    const response = await fetch(`${API_BASE_URL}/users/me`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify(updateData)
+                    });
+                    
+                    if (!response.ok) {
+                        const errorJson = await response.json();
+                        throw { response: { status: response.status, data: errorJson } };
+                    }
+                    const result = await response.json();
+                    processResponseData(result);
+
+                } catch (fetchError) {
+                    console.error("Fetch请求失败，尝试axios回退:", fetchError);
+                    const axiosResponse = await axios({
+                        method: 'put',
+                        url: `${API_BASE_URL}/users/me`,
+                        data: updateData,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    processResponseData(axiosResponse.data);
+                }
+            } catch (error) {
+                console.error("更新资料失败:", error);
+                this.handleApiError(error);
+            } finally {
+                this.profileLoading = false;
             }
         }
     }

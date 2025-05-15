@@ -100,7 +100,7 @@ uvicorn app.main:app --reload
 
 
 
-cd /Users/lifulin/Desktop/LBSF/backend/poi_service
+cd backend/poi_service
 uvicorn app.main:app --reload --port 8080
 
 

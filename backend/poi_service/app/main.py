@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 import os
 
@@ -14,7 +15,8 @@ from app.middlewares import RequestLoggerMiddleware, ErrorHandlerMiddleware
 from app.routers import auth, users, pois, map
 
 # 定义前端目录的绝对路径
-frontend_dir = "/Users/lifulin/Desktop/LBSF/frontend"
+frontend_dir = "/Users/lifulin/Desktop/LBSPOI/frontend"
+static_dir = os.path.join(frontend_dir, "static")
 
 # 创建数据库表
 models.Base.metadata.create_all(bind=database.engine)
@@ -43,7 +45,6 @@ app.add_middleware(ErrorHandlerMiddleware)
 app.add_middleware(RequestLoggerMiddleware)
 
 # 挂载静态文件目录 - 使用正确的绝对路径
-static_dir = os.path.join(frontend_dir, "static")
 js_dir = os.path.join(frontend_dir, "js")
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 app.mount("/js", StaticFiles(directory=js_dir), name="js")
@@ -62,6 +63,16 @@ app.include_router(map.router, prefix=settings.API_PREFIX)
 async def frontend_app(request: Request):
     """提供Web前端应用"""
     return templates.TemplateResponse("index.html", {"request": request})
+
+# 添加favicon.ico支持
+@app.get("/favicon.ico")
+async def get_favicon():
+    """提供网站图标"""
+    favicon_path = os.path.join(static_dir, "favicon.ico")
+    if os.path.exists(favicon_path):
+        return FileResponse(favicon_path)
+    # 如果找不到图标，返回空响应
+    return FileResponse(os.path.join(static_dir, "default_favicon.ico"))
 
 # 健康检查端点
 @app.get("/health")

@@ -20,6 +20,7 @@ async def get_nearby_facilities(
     keyword: str = "厕所",
     radius: int = Query(1000, ge=100, le=5000),
     types: Optional[str] = None,
+    amap_key: Optional[str] = None,
     db: Session = Depends(get_db),
     user: models.User = Depends(verify_api_key)
 ):
@@ -52,7 +53,8 @@ async def get_nearby_facilities(
         longitude=longitude,
         keyword=keyword,
         radius=radius,
-        types=types
+        types=types,
+        amap_key=amap_key
     )
     return result
 
@@ -60,12 +62,13 @@ async def get_nearby_facilities(
 async def geocode_address(
     address: str = Query(..., description="地址"),
     city: Optional[str] = None,
+    amap_key: Optional[str] = None,
     user: models.User = Depends(verify_api_key)
 ):
     """
     地理编码：地址转坐标
     """
-    result = await gaode_api.geocode(address, city)
+    result = await gaode_api.geocode(address, city, amap_key=amap_key)
     return result
 
 @router.get("/regeocode")
@@ -73,12 +76,13 @@ async def reverse_geocode(
     lng: float = Query(..., description="经度"),
     lat: float = Query(..., description="纬度"),
     extensions: str = Query("base", description="返回结果控制，base为基本信息，all为详细信息"),
+    amap_key: Optional[str] = None,
     user: models.User = Depends(verify_api_key)
 ):
     """
     逆地理编码：坐标转地址
     """
-    result = await gaode_api.reverse_geocode(lng, lat, extensions)
+    result = await gaode_api.reverse_geocode(lng, lat, extensions, amap_key=amap_key)
     return result
 
 @router.get("/route")
@@ -88,6 +92,7 @@ async def get_route(
     dest_lng: float = Query(..., description="终点经度"),
     dest_lat: float = Query(..., description="终点纬度"),
     mode: str = Query("walking", description="出行方式：walking步行，driving驾车，transit公交，bicycling骑行"),
+    amap_key: Optional[str] = None,
     user: models.User = Depends(verify_api_key)
 ):
     """
@@ -98,6 +103,7 @@ async def get_route(
         origin_latitude=origin_lat,
         destination_longitude=dest_lng,
         destination_latitude=dest_lat,
-        mode=mode
+        mode=mode,
+        amap_key=amap_key
     )
     return result

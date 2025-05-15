@@ -1,15 +1,23 @@
 from typing import List
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Body
 from sqlalchemy.orm import Session
 from app import crud, schemas, models
 from app.database import get_db
 from app.errors import APIError, ErrorCode
 from app.security import get_current_active_user, get_current_admin_user, verify_api_key
+from pydantic import BaseModel
 
 router = APIRouter(
     prefix="/users",
     tags=["用户管理"],
 )
+
+# 添加用于接收请求体的模型
+class UserRoleUpdate(BaseModel):
+    role: models.UserRole
+
+class UserStatusUpdate(BaseModel):
+    is_active: bool  # 直接使用is_active字段
 
 # === 用户个人信息管理（所有已认证用户可访问）===
 @router.get("/me", response_model=schemas.User)
@@ -119,7 +127,7 @@ async def read_user(
 @router.put("/{user_id}/role")
 async def update_user_role(
     user_id: int,
-    new_role: models.UserRole,
+    role_update: UserRoleUpdate,
     current_user: models.User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
@@ -138,8 +146,44 @@ async def update_user_role(
         ).raise_http_exception()
 
     # 更新用户角色
-    db_user.role = new_role
+    db_user.role = role_update.role
     db.commit()
     db.refresh(db_user)
     
-    return {"message": f"用户角色已更新为{new_role.value}"}
+    return {"message": f"用户角色已更新为{role_update.role.value}"}
+
+@router.put("/{user_id}/status")
+async def toggle_user_status(
+    user_id: int,
+    status_update: UserStatusUpdate,
+    current_user: models.User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """启用或禁用用户（仅内部维护人员）"""
+    if current_user.role != models.UserRole.ADMIN:
+        raise APIError(
+            code=ErrorCode.PERMISSION_DENIED,
+            message="只有内部维护人员可以启用或禁用用户"
+        ).raise_http_exception()
+
+    # 防止管理员禁用自己
+    if user_id == current_user.id:
+        raise APIError(
+            code=ErrorCode.OPERATION_NOT_ALLOWED,
+            message="不能修改自己的账户状态"
+        ).raise_http_exception()
+
+    db_user = crud.get_user(db, user_id=user_id)
+    if not db_user:
+        raise APIError(
+            code=ErrorCode.USER_NOT_FOUND,
+            message=f"ID为{user_id}的用户不存在"
+        ).raise_http_exception()
+
+    # 更新用户状态
+    db_user.is_active = status_update.is_active
+    db.commit()
+    db.refresh(db_user)
+    
+    status_message = "启用" if status_update.is_active else "禁用"
+    return {"message": f"用户已{status_message}"}
