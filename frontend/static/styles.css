@@ -1,0 +1,930 @@
+body {
+    font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    color: #333;
+    background-color: #f7f8fa;
+}
+
+/* 自定义地图图标样式 */
+.custom-marker-icon {
+    border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+}
+
+.custom-marker-icon.normal {
+    background-color: #4CAF50;
+}
+
+.custom-marker-icon.selected {
+    background-color: #FF5722;
+    z-index: 1000;
+    transform: scale(1.2);
+}
+
+.custom-marker-icon.facility {
+    background-color: #2196F3;
+}
+
+/* 地图信息窗口 */
+.leaflet-popup-content-wrapper {
+    border-radius: 4px;
+    padding: 0;
+    overflow: hidden;
+}
+
+.map-popup-content {
+    padding: 10px;
+}
+
+.map-popup-header {
+    background-color: #409EFF;
+    color: white;
+    padding: 10px;
+    margin: -10px -10px 10px -10px;
+}
+
+.map-popup-body {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* 自定义的POI信息卡样式 */
+.poi-info-card {
+    background-color: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+    padding: 16px;
+    max-width: 300px;
+}
+
+.poi-info-card .poi-title {
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 12px;
+}
+
+.poi-info-card .poi-content {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.poi-info-card .poi-footer {
+    margin-top: 12px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* 响应式样式 */
+@media (max-width: 768px) {
+    .main-container {
+        flex-direction: column;
+    }
+    
+    .sidebar {
+        width: 100%;
+        max-height: 40vh;
+    }
+    
+    .map-container {
+        height: 60vh;
+    }
+    
+    .poi-info {
+        width: 80%;
+        left: 10%;
+        bottom: 10px;
+    }
+}
+
+/* 加载动画 */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(255, 255, 255, 0.7);
+    z-index: 9999;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+/* 添加旋转动画 */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* 添加CSS变量 */
+:root {
+    --primary-color: #409EFF;
+    --secondary-color: #6c5ce7;
+    --gradient-start: #4facfe;
+    --gradient-end: #00f2fe;
+}
+
+/* 增强头部设计 */
+.header {
+    background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+    color: white;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+}
+
+.logo h2 {
+    margin: 0;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+}
+
+/* 侧边栏动效 */
+.sidebar {
+    transition: transform 0.3s ease;
+    background: rgba(255,255,255,0.95);
+    backdrop-filter: blur(10px);
+}
+
+/* 卡片悬浮特效 */
+.poi-card {
+    transition: all 0.3s cubic-bezier(.25,.8,.25,1);
+    border-radius: 12px;
+    border: 1px solid rgba(0,0,0,0.05);
+}
+
+.poi-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+}
+
+/* 地图工具按钮 */
+.map-tools .el-button {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transition: all 0.3s ease;
+}
+
+/* 加载动画优化 */
+@keyframes spin {
+    0% { transform: rotate(0deg); opacity: 0.8; }
+    100% { transform: rotate(360deg); opacity: 1; }
+}
+
+.loading-overlay div {
+    width: 60px;
+    height: 60px;
+    animation: spin 0.8s ease-in-out infinite;
+}
+
+/* 滚动条美化 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(0,0,0,0.05);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--primary-color);
+    border-radius: 4px;
+}
+
+@media (max-width: 768px) {
+    .header {
+        height: 50px;
+        padding: 0 10px;
+    }
+    
+    .logo h2 {
+        font-size: 18px;
+    }
+    
+    .map-tools {
+        top: auto;
+        bottom: 20px;
+        right: 10px;
+        display: flex;
+        gap: 5px;
+    }
+    
+    .map-tools .el-button {
+        width: 35px;
+        height: 35px;
+    }
+    
+    .poi-info {
+        width: 90%;
+        left: 5%;
+        bottom: 10px;
+    }
+}
+
+/* 增强POI卡片悬浮效果 */
+.poi-card {
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    transform-origin: center bottom;
+    border: none;
+    overflow: hidden;
+}
+
+.poi-card:hover {
+    transform: translateY(-8px) scale(1.02);
+    box-shadow: 0 15px 30px rgba(0, 0, 0, 0.12);
+}
+
+.poi-card:hover::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    background: linear-gradient(90deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.poi-card.active {
+    border-left: 4px solid #409EFF;
+    box-shadow: 0 5px 15px rgba(64, 158, 255, 0.3);
+}
+
+/* 主要按钮特效 */
+.el-button--primary {
+    position: relative;
+    overflow: hidden;
+    z-index: 1;
+}
+
+.el-button--primary:hover {
+    box-shadow: 0 0 15px rgba(64, 158, 255, 0.6);
+}
+
+.el-button--primary::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 5px;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.5);
+    opacity: 0;
+    border-radius: 100%;
+    transform: scale(1, 1) translate(-50%, -50%);
+    transform-origin: 50% 50%;
+}
+
+.el-button--primary:hover::after {
+    animation: ripple 1s ease-out;
+}
+
+@keyframes ripple {
+    0% {
+        transform: scale(0, 0);
+        opacity: 0.5;
+    }
+    100% {
+        transform: scale(20, 20);
+        opacity: 0;
+    }
+}
+
+/* 地图标记悬停效果 */
+.custom-marker:hover {
+    transform: translate(-50%, -100%) scale(1.2) !important;
+    z-index: 1000;
+    filter: drop-shadow(0 0 8px rgba(0, 0, 0, 0.3));
+}
+
+/* 标记弹出窗口动画 */
+.leaflet-popup-content-wrapper {
+    animation: popupFadeIn 0.3s ease-out;
+}
+
+@keyframes popupFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* 输入框动态边框 */
+.el-input__inner {
+    transition: border-color 0.3s, box-shadow 0.3s;
+    border: 1px solid #dcdfe6;
+}
+
+.el-input__inner:focus {
+    border-color: #409EFF;
+    box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+}
+
+/* 搜索框悬浮效果 */
+.search-bar .el-input__inner:hover {
+    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* 增强加载动画 */
+.loading-overlay {
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(3px);
+}
+
+.loading-overlay div {
+    width: 60px;
+    height: 60px;
+    border: 4px solid rgba(64, 158, 255, 0.2);
+    border-top-color: #409EFF;
+    animation: spin 0.8s linear infinite;
+    position: relative;
+}
+
+.loading-overlay div::after {
+    content: '';
+    position: absolute;
+    top: -4px;
+    left: -4px;
+    right: -4px;
+    bottom: -4px;
+    border: 4px solid transparent;
+    border-top-color: #00f2fe;
+    border-radius: 50%;
+    animation: spinReverse 1.2s linear infinite;
+}
+
+@keyframes spinReverse {
+    to { transform: rotate(-360deg); }
+}
+
+/* 响应式侧边栏动画 */
+@media (max-width: 768px) {
+    .sidebar {
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+        position: absolute;
+        z-index: 1001;
+        height: 60vh;
+    }
+    
+    .sidebar-visible .sidebar {
+        transform: translateX(0);
+    }
+    
+    /* 添加切换按钮 */
+    .sidebar-toggle {
+        display: block;
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        z-index: 1002;
+    }
+}
+
+/* API密钥表格效果 */
+.el-table__body tr:hover td {
+    background-color: #f5f7fa !important;
+    transform: scale(1.005);
+}
+
+.el-table__body tr {
+    transition: all 0.2s ease;
+}
+
+/* 复制按钮特效 */
+.el-button.el-button--default.el-button--mini:hover {
+    background-color: #409EFF;
+    color: white;
+}
+
+/* 动画效果 */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+/* 头部导航栏 */
+.header {
+    padding: 0 20px;
+    height: 60px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #fff;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+    position: relative;
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+}
+
+.logo h2 {
+    margin: 0;
+    color: #1890ff;
+    font-weight: 600;
+    font-size: 20px;
+}
+
+.auth-section {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.auth-section .el-button {
+    margin-left: 8px;
+}
+
+.auth-section span {
+    font-size: 14px;
+    color: #555;
+}
+
+.el-dropdown-link {
+    cursor: pointer;
+    color: #409EFF;
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    border-radius: 4px;
+    transition: all 0.3s;
+}
+
+.el-dropdown-link:hover {
+    background-color: #f2f6fc;
+}
+
+.el-dropdown-link i {
+    font-size: 18px;
+}
+
+/* 主内容区域 */
+.main-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    background-color: #f7f8fa;
+}
+
+/* 侧边栏 */
+.sidebar {
+    width: 350px;
+    background-color: #fff;
+    padding: 20px;
+    overflow-y: auto;
+    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.05);
+    border-radius: 0 0 0 8px;
+    animation: fadeIn 0.5s ease-in;
+    z-index: 10;
+}
+
+.sidebar-header {
+    margin-bottom: 16px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 12px;
+}
+
+.sidebar-header h3 {
+    margin: 0 0 8px 0;
+    color: #333;
+    font-weight: 500;
+}
+
+.search-bar {
+    margin-bottom: 20px;
+}
+
+.filter-section {
+    margin-bottom: 20px;
+    background-color: #f9f9f9;
+    padding: 16px;
+    border-radius: 6px;
+    border: 1px solid #eee;
+}
+
+.filter-section h4 {
+    margin-top: 0;
+    margin-bottom: 12px;
+    color: #555;
+    font-weight: 500;
+}
+
+.filter-buttons {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 15px;
+    gap: 10px;
+}
+
+/* POI列表 */
+.poi-list {
+    max-height: calc(100vh - 280px);
+    overflow-y: auto;
+    margin-bottom: 10px;
+    padding-right: 5px;
+}
+
+.poi-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.poi-list::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+.poi-list::-webkit-scrollbar-thumb {
+    background: #ccc;
+    border-radius: 3px;
+}
+
+.poi-list::-webkit-scrollbar-thumb:hover {
+    background: #aaa;
+}
+
+.poi-card {
+    cursor: pointer;
+    margin-bottom: 10px;
+    transition: all 0.3s;
+    border-radius: 6px;
+    border-left: 3px solid transparent;
+    overflow: hidden;
+}
+
+.poi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    border-left: 3px solid #1890ff;
+}
+
+.poi-card.active {
+    border-color: #1890ff;
+    box-shadow: 0 0 8px rgba(24, 144, 255, 0.5);
+    background-color: #e6f7ff;
+}
+
+.poi-card .el-card__header {
+    padding: 12px 16px;
+    font-weight: 500;
+    background-color: #f9f9f9;
+    border-bottom: 1px solid #eee;
+}
+
+.poi-card .el-card__body {
+    padding: 12px 16px;
+}
+
+.poi-card__info {
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #666;
+    font-size: 13px;
+}
+
+.poi-card__info i {
+    font-size: 14px;
+    color: #1890ff;
+}
+
+/* 地图容器 */
+.map-container {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    border-radius: 0 0 8px 0;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+}
+
+/* 地图工具栏 */
+.map-tools {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    background-color: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(5px);
+    border-radius: 8px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+    overflow: hidden;
+    width: 220px;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.map-tools:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+}
+
+.map-tools-header {
+    padding: 10px 15px;
+    background: linear-gradient(135deg, #1890ff, #36cfc9);
+    color: white;
+    font-weight: 500;
+    font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.map-tools-header i {
+    margin-right: 5px;
+}
+
+.map-tools-toggle {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 0;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.3s;
+}
+
+.map-tools-toggle:hover {
+    background-color: rgba(255, 255, 255, 0.2);
+}
+
+.map-tools-content {
+    padding: 10px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.map-tools-group {
+    margin-bottom: 12px;
+    background-color: rgba(245, 247, 250, 0.8);
+    border-radius: 6px;
+    padding: 8px;
+}
+
+.map-tools-group h4 {
+    margin: 0 0 8px 0;
+    font-size: 13px;
+    color: #606266;
+    font-weight: 500;
+    padding-bottom: 5px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.map-tools-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.map-tools-buttons .el-button {
+    width: auto;
+    height: auto;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.map-tools-buttons .el-button i {
+    margin-right: 4px;
+}
+
+.map-tools-buttons .el-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.map-tools-buttons .el-button span {
+    margin-left: 3px;
+    font-size: 12px;
+}
+
+/* 响应式适配 */
+@media (max-width: 768px) {
+    .map-tools {
+        width: 180px;
+    }
+
+    .map-tools-buttons .el-button span {
+        display: none;
+    }
+    
+    .map-tools-buttons .el-button i {
+        margin-right: 0;
+    }
+}
+
+/* POI信息卡片 */
+.poi-info {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    z-index: 1000;
+    max-width: 350px;
+    background-color: white;
+    padding: 16px;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    transition: all 0.3s;
+    animation: fadeIn 0.4s ease-in;
+}
+
+.poi-info:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.poi-info h3 {
+    margin-top: 0;
+    margin-bottom: 12px;
+    color: #333;
+    font-weight: 500;
+    border-bottom: 1px solid #f0f0f0;
+    padding-bottom: 8px;
+}
+
+.poi-info__detail {
+    margin-bottom: 8px;
+    display: flex;
+    gap: 5px;
+}
+
+.poi-info__label {
+    font-weight: 500;
+    color: #666;
+    min-width: 70px;
+}
+
+.poi-info__value {
+    color: #333;
+    flex: 1;
+}
+
+.poi-info__actions {
+    margin-top: 16px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* 登录表单 */
+.login-form {
+    width: 100%;
+    max-width: 350px;
+    margin: 0 auto;
+}
+
+.login-tabs .el-tabs__header {
+    margin-bottom: 20px;
+}
+
+.login-tabs .el-tabs__nav {
+    width: 100%;
+}
+
+.login-tabs .el-tabs__item {
+    width: 50%;
+    text-align: center;
+}
+
+/* 加载状态与错误提示 */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(255, 255, 255, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.map-loading-overlay, .map-error-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-color: rgba(255, 255, 255, 0.8);
+    z-index: 1000;
+}
+
+.map-loading-indicator, .map-error-message {
+    background-color: white;
+    padding: 24px;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    text-align: center;
+    max-width: 350px;
+}
+
+.map-loading-indicator i, .map-error-message i {
+    font-size: 24px;
+    margin-right: 8px;
+}
+
+.map-error-message i {
+    color: #F56C6C;
+}
+
+.map-error-message button {
+    margin-top: 16px;
+}
+
+/* 数据表格 */
+.data-table {
+    width: 100%;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+}
+
+.data-table .el-table__header-wrapper th {
+    background-color: #f7f8fa;
+    color: #555;
+    font-weight: 500;
+}
+
+/* 对话框样式 */
+.el-dialog {
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.el-dialog__header {
+    background-color: #f7f8fa;
+    padding: 16px 20px;
+    border-bottom: 1px solid #eee;
+}
+
+.el-dialog__title {
+    font-weight: 500;
+    color: #333;
+}
+
+.el-dialog__body {
+    padding: 24px;
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .main-container {
+        flex-direction: column;
+    }
+    
+    .sidebar {
+        width: 100%;
+        border-radius: 0;
+    }
+    
+    .map-container {
+        height: 60vh;
+        border-radius: 0;
+    }
+    
+    .poi-list {
+        max-height: 300px;
+    }
+    
+    .map-tools {
+        top: 70px;
+    }
+}
