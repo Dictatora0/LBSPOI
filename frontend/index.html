@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>POI信息服务系统 - 地理位置兴趣点管理平台</title>
+    <!-- 先加载Leaflet库 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" integrity="sha512-xodZBNTC5n17Xt2atTPuE1HxjVMSvLVW9ocqUKLsCC5CXdbqCmblAshOMAS6/keqq/sMZMZ19scR4PsZChSR7A==" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js" integrity="sha512-XQoYMqMTK8LvdxXYG3nZ448hOEQiglfqkJs1NOQV44cWnUrBc8PkAOcXy20w0vlaXaVUearIOBhiXZ5V3ynxwA==" crossorigin=""></script>
+    
+    <!-- 然后加载Vue和Element UI -->
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@5.15.4/css/all.min.css">
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .header {
+            padding: 0 20px;
+            height: 60px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            background: linear-gradient(135deg, #1890ff, #36cfc9);
+            color: white;
+        }
+        
+        .main-container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .sidebar {
+            width: 350px;
+            background-color: #f5f7fa;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.05);
+        }
+        
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .search-bar {
+            margin-bottom: 20px;
+        }
+        
+        .filter-section {
+            margin-bottom: 20px;
+        }
+        
+        .poi-list {
+            max-height: calc(100vh - 280px);
+            overflow-y: auto;
+            margin-bottom: 10px;
+            padding-right: 5px;
+        }
+        
+        .poi-card {
+            cursor: pointer;
+            margin-bottom: 10px;
+            transition: transform 0.2s;
+            border-radius: 8px;
+            transition: all 0.3s;
+        }
+        
+        .poi-card:hover {
+            transform: translateY(-2px);
+        }
+        
+        .poi-card.active {
+            border-color: #409EFF;
+            box-shadow: 0 0 8px rgba(64, 158, 255, 0.6);
+        }
+        
+        .map-tools {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            background-color: white;
+            padding: 10px;
+            border-radius: 4px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+        }
+        
+        /* 优化工具栏按钮样式 */
+        .map-tools .map-tool-buttons {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .map-tools .map-tool-buttons .el-button {
+            margin-left: 0 !important;
+            min-width: 80px;
+            padding: 8px 12px;
+            border-radius: 4px !important;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .map-tools .el-button-group .el-button:not(:first-child):not(:last-child) {
+            border-radius: 4px !important;
+        }
+        
+        .map-tools .el-button-group .el-button:first-child {
+            border-radius: 4px !important;
+        }
+        
+        .map-tools .el-button-group .el-button:last-child {
+            border-radius: 4px !important;
+        }
+        
+        .poi-info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 1000;
+            max-width: 300px;
+            background-color: white;
+            padding: 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+        }
+        
+        .login-form {
+            width: 100%;
+            max-width: 350px;
+            margin: 0 auto;
+        }
+        
+        /* 地图加载和错误样式 */
+        .map-loading-overlay, .map-error-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: rgba(255, 255, 255, 0.8);
+            z-index: 1000;
+        }
+        
+        .map-loading-indicator, .map-error-message {
+            background-color: white;
+            padding: 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        .map-loading-indicator i, .map-error-message i {
+            font-size: 24px;
+            margin-right: 8px;
+        }
+        
+        .map-error-message i {
+            color: #F56C6C;
+        }
+        
+        .map-error-message button {
+            margin-top: 10px;
+        }
+        
+        .logo h2 {
+            color: white;
+            font-weight: 600;
+            text-shadow: 1px 1px 3px rgba(0,0,0,0.2);
+        }
+        
+        .auth-section {
+            display: flex;
+            align-items: center;
+        }
+        
+        .auth-section span {
+            color: white;
+            margin-right: 10px;
+        }
+        
+        .el-dropdown-link {
+            color: white;
+            cursor: pointer;
+            padding: 6px 10px;
+            border-radius: 4px;
+            transition: all 0.3s;
+        }
+        
+        .el-dropdown-link:hover {
+            background-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* 侧边栏头部样式 */
+        .sidebar-header {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        .sidebar-header h3 {
+            margin: 0;
+            color: #333;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+        }
+        
+        .sidebar-header h3 i {
+            margin-right: 8px;
+            color: #1890ff;
+        }
+        
+        /* 修改滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f5f5f5;
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 3px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #999;
+        }
+    </style>
+</head>
+<body>
+    <!-- 加载动画覆盖层 -->
+    <div id="loading-overlay" style="display:none;" class="loading-overlay">
+        <div style="width:50px; height:50px; border:5px solid #1890ff; border-radius:50%; border-top-color:transparent; animation:spin 1s linear infinite;"></div>
+    </div>
+
+    {% raw %}
+    <div id="app">
+        <el-header class="header">
+            <div class="logo">
+                <h2><i class="fas fa-map-marker-alt"></i> POI信息服务系统</h2>
+            </div>
+            <div class="auth-section">
+                <template v-if="isLoggedIn && currentUser">
+                    <span>欢迎, {{ currentUser.username }}</span>
+                    <el-dropdown @command="handleCommand" trigger="click">
+                        <span class="el-dropdown-link">
+                            <i class="el-icon-user"></i>
+                        </span>
+                        <el-dropdown-menu slot="dropdown">
+                            <el-dropdown-item command="profile">个人资料</el-dropdown-item>
+                            <el-dropdown-item command="apikeys">API密钥管理</el-dropdown-item>
+                            <el-dropdown-item command="admin" v-if="currentUser && currentUser.role === 'admin'">管理员功能</el-dropdown-item>
+                            <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
+                        </el-dropdown-menu>
+                    </el-dropdown>
+                </template>
+                <template v-else>
+                    <el-button size="small" type="primary" @click="showLoginDialog = true">登录</el-button>
+                    <el-button size="small" type="success" @click="showRegisterDialog = true">注册</el-button>
+                </template>
+            </div>
+        </el-header>
+        
+        <div class="main-container">
+            <div class="sidebar">
+                <div class="search-bar">
+                    <el-input
+                        placeholder="搜索POI..."
+                        v-model="searchQuery"
+                        @keyup.enter.native="searchPOIs"
+                        clearable>
+                        <el-button slot="append" icon="el-icon-search" @click="searchPOIs"></el-button>
+                    </el-input>
+                </div>
+                
+                <div class="filter-section">
+                    <el-collapse>
+                        <el-collapse-item title="筛选条件" name="1">
+                            <el-form :model="filterForm" label-width="80px" size="small">
+                                <el-form-item label="省份">
+                                    <el-select v-model="filterForm.province" placeholder="选择省份" clearable>
+                                        <el-option
+                                            v-for="item in provinces"
+                                            :key="item"
+                                            :label="item"
+                                            :value="item">
+                                        </el-option>
+                                    </el-select>
+                                </el-form-item>
+                                <el-form-item label="类别">
+                                    <el-select v-model="filterForm.category" placeholder="选择类别" clearable>
+                                        <el-option
+                                            v-for="item in categories"
+                                            :key="item"
+                                            :label="item"
+                                            :value="item">
+                                        </el-option>
+                                    </el-select>
+                                </el-form-item>
+                                <el-form-item label="等级">
+                                    <el-select v-model="filterForm.level" placeholder="选择等级" clearable>
+                                        <el-option
+                                            v-for="item in levels"
+                                            :key="item"
+                                            :label="item"
+                                            :value="item">
+                                        </el-option>
+                                    </el-select>
+                                </el-form-item>
+                                <el-form-item>
+                                    <el-button type="primary" @click="applyFilters">应用筛选</el-button>
+                                    <el-button @click="resetFilters">重置</el-button>
+                                </el-form-item>
+                            </el-form>
+                        </el-collapse-item>
+                    </el-collapse>
+                </div>
+                
+                <div class="poi-list">
+                    <el-card
+                        v-for="poi in pois"
+                        :key="poi.id"
+                        class="poi-card"
+                        :class="{ active: selectedPOI && selectedPOI.id === poi.id }"
+                        @click.native="selectPOI(poi)">
+                        <div slot="header">
+                            <span>{{ poi.name }}</span>
+                            <el-tag size="mini" type="success" v-if="poi.level">{{ poi.level }}</el-tag>
+                        </div>
+                        <div>
+                            <p><i class="el-icon-location"></i> {{ poi.province }} {{ poi.city }}</p>
+                            <p v-if="poi.category"><i class="el-icon-collection-tag"></i> {{ poi.category }}</p>
+                        </div>
+                    </el-card>
+                    
+                    <el-pagination
+                        @current-change="handlePageChange"
+                        :current-page.sync="currentPage"
+                        :page-size="pageSize"
+                        layout="prev, pager, next"
+                        :total="totalPOIs">
+                    </el-pagination>
+                </div>
+            </div>
+            
+            <div class="map-container">
+                <div id="map"></div>
+                
+                <!-- 地图加载状态 -->
+                <div v-if="!mapInitialized && !mapError" class="map-loading-overlay">
+                    <div class="map-loading-indicator">
+                        <i class="el-icon-loading"></i>
+                        <span>正在加载地图...</span>
+                    </div>
+                </div>
+                
+                <!-- 地图错误提示 -->
+                <div v-if="mapError" class="map-error-overlay">
+                    <div class="map-error-message">
+                        <i class="el-icon-warning"></i>
+                        <span>{{ mapError }}</span>
+                        <el-button size="small" type="primary" @click="safeInitMap">重试</el-button>
+                    </div>
+                </div>
+                
+                <!-- 地图工具栏 -->
+                <div class="map-tools">
+                    <div class="map-tools-header">
+                        <i class="fas fa-tools"></i> 地图工具
+                        <button class="map-tools-toggle" @click="toggleMapTools">
+                            <i :class="mapToolsExpanded ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"></i>
+                        </button>
+                    </div>
+                    <div class="map-tools-content" v-show="mapToolsExpanded">
+                        <div class="map-tools-group">
+                            <h4>视图控制</h4>
+                            <div class="map-tools-buttons">
+                                <el-tooltip content="将选中的POI居中显示" placement="left" effect="light">
+                                    <el-button size="small" type="primary" plain icon="el-icon-aim" @click="centerMap">
+                                        <span>居中</span>
+                                    </el-button>
+                                </el-tooltip>
+                                <el-tooltip content="重置地图视图" placement="left" effect="light">
+                                    <el-button size="small" type="info" plain icon="el-icon-refresh-right" @click="resetMapView">
+                                        <span>重置</span>
+                                    </el-button>
+                                </el-tooltip>
+                            </div>
+                        </div>
+                        <div class="map-tools-group">
+                            <h4>选择工具</h4>
+                            <div class="map-tools-buttons">
+                                <el-tooltip content="框选区域内的POI" placement="left" effect="light">
+                                    <el-button size="small" type="success" plain icon="el-icon-crop" @click="activateBoxSelect">
+                                        <span>框选</span>
+                                    </el-button>
+                                </el-tooltip>
+                                <el-tooltip content="选择半径范围内的POI" placement="left" effect="light">
+                                    <el-button size="small" type="warning" plain icon="el-icon-location" @click="activateRadiusSelect">
+                                        <span>半径选择</span>
+                                    </el-button>
+                                </el-tooltip>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="poi-info" v-if="selectedPOI">
+                    <h3>{{ selectedPOI.name }}</h3>
+                    <p v-if="selectedPOI.address"><i class="el-icon-location"></i> {{ selectedPOI.address }}</p>
+                    <p v-else><i class="el-icon-location"></i> {{ selectedPOI.province }} {{ selectedPOI.city }}</p>
+                    <p v-if="selectedPOI.category"><i class="el-icon-collection-tag"></i> 类别: {{ selectedPOI.category }}</p>
+                    <p v-if="selectedPOI.level"><i class="el-icon-medal"></i> 等级: {{ selectedPOI.level }}</p>
+                    
+                    <div v-if="selectedPOI.extensions && selectedPOI.extensions.length > 0">
+                        <p v-if="selectedPOI.extensions[0].phone">
+                            <i class="el-icon-phone"></i> {{ selectedPOI.extensions[0].phone }}
+                        </p>
+                        <p v-if="selectedPOI.extensions[0].opening_hours">
+                            <i class="el-icon-time"></i> {{ selectedPOI.extensions[0].opening_hours }}
+                        </p>
+                        <p v-if="selectedPOI.extensions[0].website">
+                            <i class="el-icon-link"></i> 
+                            <a :href="selectedPOI.extensions[0].website" target="_blank">官方网站</a>
+                        </p>
+                    </div>
+                    
+                    <el-button size="small" type="primary" @click="showNearbyFacilities">查看周边设施</el-button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 登录对话框 -->
+        <el-dialog title="用户登录" :visible.sync="showLoginDialog" width="400px">
+            <el-form ref="loginForm" :model="loginForm" :rules="loginRules" label-width="80px" class="login-form">
+                <el-form-item label="用户名" prop="username">
+                    <el-input v-model="loginForm.username"></el-input>
+                </el-form-item>
+                <el-form-item label="密码" prop="password">
+                    <el-input v-model="loginForm.password" type="password"></el-input>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="login" :loading="loginLoading">登录</el-button>
+                    <el-button @click="showLoginDialog = false">取消</el-button>
+                </el-form-item>
+            </el-form>
+        </el-dialog>
+        
+        <!-- 注册对话框 -->
+        <el-dialog title="用户注册" :visible.sync="showRegisterDialog" width="400px">
+            <el-form ref="registerForm" :model="registerForm" :rules="registerRules" label-width="80px" class="login-form">
+                <el-form-item label="用户名" prop="username">
+                    <el-input v-model="registerForm.username"></el-input>
+                </el-form-item>
+                <el-form-item label="邮箱" prop="email">
+                    <el-input v-model="registerForm.email" type="email"></el-input>
+                </el-form-item>
+                <el-form-item label="密码" prop="password">
+                    <el-input v-model="registerForm.password" type="password"></el-input>
+                </el-form-item>
+                <el-form-item label="确认密码" prop="confirmPassword">
+                    <el-input v-model="registerForm.confirmPassword" type="password"></el-input>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="register" :loading="registerLoading">注册</el-button>
+                    <el-button @click="showRegisterDialog = false">取消</el-button>
+                </el-form-item>
+            </el-form>
+        </el-dialog>
+        
+        <!-- API密钥管理对话框 -->
+        <el-dialog title="API密钥管理" :visible.sync="showApiKeyDialog" width="600px">
+            <div>
+                <el-button type="primary" @click="createApiKey" :loading="apiKeyLoading" style="margin-bottom: 15px;">创建新密钥</el-button>
+                
+                <el-table :data="apiKeys" style="width: 100%">
+                    <el-table-column prop="key" label="API密钥" width="280">
+                        <template slot-scope="scope">
+                            <el-input size="mini" :value="scope.row.key" readonly>
+                                <el-button slot="append" icon="el-icon-copy-document" @click="copyApiKey(scope.row.key)"></el-button>
+                            </el-input>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="created_at" label="创建时间" width="160">
+                        <template slot-scope="scope">
+                            <span v-if="scope.row.created_at">{{ formatDate(scope.row.created_at) }}</span>
+                        </template>
+                    </el-table-column>
+                    <el-table-column prop="is_active" label="状态" width="80">
+                        <template slot-scope="scope">
+                            <el-tag :type="scope.row.is_active ? 'success' : 'danger'">
+                                {{ scope.row.is_active ? '有效' : '已停用' }}
+                            </el-tag>
+                        </template>
+                    </el-table-column>
+                    <el-table-column label="操作">
+                        <template slot-scope="scope">
+                            <el-button type="danger" size="mini" @click="deactivateApiKey(scope.row.key)" 
+                                       :disabled="!scope.row.is_active">停用</el-button>
+                        </template>
+                    </el-table-column>
+                </el-table>
+            </div>
+        </el-dialog>
+        
+        <!-- 周边设施对话框 -->
+        <el-dialog title="周边设施查询" :visible.sync="showNearbyDialog" width="600px">
+            <el-form inline>
+                <el-form-item label="关键词">
+                    <el-input v-model="nearbyKeyword" placeholder="如: 餐厅, 厕所, 停车场"></el-input>
+                </el-form-item>
+                <el-form-item label="半径(米)">
+                    <div style="display: flex; flex-direction: column; width: 100%;">
+                        <div style="display: flex; align-items: center; width: 100%; margin-bottom: 5px;">
+                            <el-slider v-model="nearbyRadius" :min="100" :max="5000" :step="100" style="width: 100%; padding: 10px 0;"></el-slider>
+                        </div>
+                        <div style="text-align: center; font-size: 14px; color: #606266;">
+                            当前半径: <strong>{{ nearbyRadius }}</strong> 米
+                        </div>
+                    </div>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="searchNearby" :loading="nearbyLoading">查询</el-button>
+                </el-form-item>
+            </el-form>
+            
+            <el-table :data="nearbyFacilities" style="width: 100%">
+                <el-table-column prop="name" label="名称" width="180"></el-table-column>
+                <el-table-column prop="type" label="类型" width="120"></el-table-column>
+                <el-table-column prop="distance" label="距离(米)" width="100">
+                    <template slot-scope="scope">
+                        {{ Math.round(scope.row.distance) }}
+                    </template>
+                </el-table-column>
+                <el-table-column prop="address" label="地址"></el-table-column>
+                <el-table-column label="操作" width="120">
+                    <template slot-scope="scope">
+                        <el-button type="text" @click="showOnMap(scope.row)">在地图查看</el-button>
+                    </template>
+                </el-table-column>
+            </el-table>
+        </el-dialog>
+        
+        <!-- 用户管理对话框 -->
+        <el-dialog
+            title="管理员面板"
+            :visible.sync="showAdminDialog"
+            width="80%"
+            :before-close="() => showAdminDialog = false">
+            
+            <el-tabs v-model="adminSection" @tab-click="changeAdminSection">
+                <el-tab-pane label="用户管理" name="users">
+                    <div style="margin-bottom: 15px">
+                        <p>系统总用户数: {{ adminUsers.length }}</p>
+                    </div>
+                    <el-table
+                        :data="adminUsers"
+                        border
+                        stripe
+                        v-loading="adminLoading"
+                        style="width: 100%">
+                        <el-table-column prop="id" label="ID" width="80"></el-table-column>
+                        <el-table-column prop="username" label="用户名" width="150"></el-table-column>
+                        <el-table-column prop="email" label="邮箱"></el-table-column>
+                        <el-table-column prop="role" label="角色" width="120">
+                            <template slot-scope="scope">
+                                <el-tag :type="['admin', 'ADMIN'].includes(scope.row.role) ? 'danger' : 'primary'">
+                                    {{ ['admin', 'ADMIN'].includes(scope.row.role) ? '管理员' : '普通用户' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="is_active" label="状态" width="100">
+                            <template slot-scope="scope">
+                                <el-tag :type="scope.row.is_active ? 'success' : 'info'">
+                                    {{ scope.row.is_active ? '启用' : '禁用' }}
+                                </el-tag>
+                            </template>
+                        </el-table-column>
+                        <el-table-column prop="created_at" label="注册时间" width="180">
+                            <template slot-scope="scope">
+                                {{ formatDate(scope.row.created_at) }}
+                            </template>
+                        </el-table-column>
+                        <el-table-column label="操作" width="200">
+                            <template slot-scope="scope">
+                                <el-dropdown v-if="currentUser && currentUser.id !== scope.row.id" @command="(cmd) => updateUserRole(scope.row.id, cmd)" split-button type="primary" size="mini">
+                                    修改角色
+                                    <el-dropdown-menu slot="dropdown">
+                                        <el-dropdown-item command="user">设为普通用户</el-dropdown-item>
+                                        <el-dropdown-item command="admin">设为管理员</el-dropdown-item>
+                                    </el-dropdown-menu>
+                                </el-dropdown>
+                                <el-button 
+                                    v-if="currentUser && currentUser.id !== scope.row.id"
+                                    size="mini" 
+                                    :type="scope.row.is_active ? 'danger' : 'success'"
+                                    @click="toggleUserStatus(scope.row.id, !scope.row.is_active)">
+                                    {{ scope.row.is_active ? '禁用' : '启用' }}
+                                </el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+                <el-tab-pane label="POI管理" name="pois">
+                    <div style="margin-bottom: 15px">
+                        <el-button type="primary" @click="openAddPoiDialog">添加POI</el-button>
+                    </div>
+                    <el-table
+                        :data="adminPOIs"
+                        border
+                        stripe
+                        v-loading="adminLoading"
+                        style="width: 100%">
+                        <el-table-column prop="id" label="ID" width="80"></el-table-column>
+                        <el-table-column prop="name" label="名称" width="180"></el-table-column>
+                        <el-table-column prop="province" label="省份"></el-table-column>
+                        <el-table-column prop="city" label="城市"></el-table-column>
+                        <el-table-column prop="category" label="类别"></el-table-column>
+                        <el-table-column prop="level" label="等级" width="100"></el-table-column>
+                        <el-table-column label="操作" width="150">
+                            <template slot-scope="scope">
+                                <el-button size="mini" type="primary" @click="selectPOI(scope.row)">查看</el-button>
+                                <el-button size="mini" type="danger">删除</el-button>
+                            </template>
+                        </el-table-column>
+                    </el-table>
+                </el-tab-pane>
+            </el-tabs>
+        </el-dialog>
+        
+        <!-- 个人资料对话框 -->
+        <el-dialog
+            title="个人资料"
+            :visible.sync="showProfileDialog"
+            width="40%">
+            <el-form :model="profileForm" label-width="100px" :rules="loginRules">
+                <el-form-item label="用户名" prop="username">
+                    <el-input v-model="profileForm.username"></el-input>
+                </el-form-item>
+                <el-form-item label="邮箱" prop="email">
+                    <el-input v-model="profileForm.email"></el-input>
+                </el-form-item>
+                <el-divider content-position="left">修改密码（可选）</el-divider>
+                <el-form-item label="当前密码">
+                    <el-input v-model="profileForm.currentPassword" type="password" show-password></el-input>
+                </el-form-item>
+                <el-form-item label="新密码">
+                    <el-input v-model="profileForm.newPassword" type="password" show-password></el-input>
+                </el-form-item>
+                <el-form-item label="确认新密码">
+                    <el-input v-model="profileForm.confirmNewPassword" type="password" show-password></el-input>
+                </el-form-item>
+            </el-form>
+            <span slot="footer" class="dialog-footer">
+                <el-button @click="showProfileDialog = false">取消</el-button>
+                <el-button type="primary" @click="updateProfile" :loading="profileLoading">保存更改</el-button>
+            </span>
+        </el-dialog>
+        
+        <!-- 添加POI对话框 -->
+        <el-dialog
+            title="添加新POI"
+            :visible.sync="showAddPoiDialog"
+            width="50%"
+            :before-close="closeAddPoiDialog">
+            <el-form :model="newPoiForm" label-width="100px">
+                <el-form-item label="POI名称" required>
+                    <el-input v-model="newPoiForm.name" placeholder="请输入POI名称"></el-input>
+                </el-form-item>
+                <el-form-item label="分类">
+                    <el-select v-model="newPoiForm.category" placeholder="请选择分类">
+                        <el-option
+                          v-for="item in categories"
+                          :key="item"
+                          :label="item"
+                          :value="item">
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="等级">
+                    <el-select v-model="newPoiForm.level" placeholder="请选择景区等级">
+                        <el-option
+                          v-for="item in levels"
+                          :key="item"
+                          :label="item"
+                          :value="item">
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="省份">
+                    <el-select v-model="newPoiForm.province" placeholder="请选择省份">
+                        <el-option
+                          v-for="item in provinces"
+                          :key="item"
+                          :label="item"
+                          :value="item">
+                        </el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="城市">
+                    <el-input v-model="newPoiForm.city" placeholder="请输入城市"></el-input>
+                </el-form-item>
+                <el-form-item label="地址">
+                    <el-input v-model="newPoiForm.address" placeholder="请输入详细地址"></el-input>
+                </el-form-item>
+                <el-form-item label="描述">
+                    <el-input type="textarea" v-model="newPoiForm.description" :rows="4" placeholder="请输入POI描述信息"></el-input>
+                </el-form-item>
+                <el-form-item label="位置" required>
+                    <div style="display: flex; align-items: center;">
+                        <div>
+                            <span>纬度: {{ newPoiForm.latitude ? newPoiForm.latitude.toFixed(6) : '未设置' }}</span>
+                            <br>
+                            <span>经度: {{ newPoiForm.longitude ? newPoiForm.longitude.toFixed(6) : '未设置' }}</span>
+                        </div>
+                        <el-alert
+                            style="margin-left: 20px;"
+                            title="请在地图上点击选择POI位置"
+                            type="info"
+                            :closable="false"
+                            show-icon>
+                        </el-alert>
+                    </div>
+                </el-form-item>
+            </el-form>
+            <span slot="footer" class="dialog-footer">
+                <el-button @click="closeAddPoiDialog">取消</el-button>
+                <el-button type="primary" @click="submitNewPoi" :loading="addPoiLoading">确认添加</el-button>
+            </span>
+        </el-dialog>
+    </div>
+    {% endraw %}
+
+    <!-- 引入必要的脚本 -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios@0.21.1/dist/axios.min.js"></script>
+    <script src="/js/app.js"></script>
+</body>
+</html> 
