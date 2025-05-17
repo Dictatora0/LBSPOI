@@ -267,10 +267,37 @@ def create_poi(db: Session, poi: schemas.POICreate, user_id: int) -> models.POI:
                 }
             )
         
-        db_poi = models.POI(**poi.dict(), created_by=user_id)
-        db.add(db_poi)
+        poi_data = poi.dict(exclude={"extension"})
+        db_poi = models.POI(**poi_data, created_by=user_id)
+        
+        # 处理扩展信息
+        if poi.extension:
+            extension_data = poi.extension.dict()
+            # POIExtension 的构造函数不需要 poi 参数，SQLAlchemy 会通过 backref/relationship 处理关联
+            # 但为了清晰和确保关联，可以直接设置 poi_id 或将 POI 实例传递给关系属性
+            # 假设 POIExtension 模型有 poi_id 字段或接受 poi 实例以建立关系
+            db_extension = models.POIExtension(**extension_data)
+            db_poi.extensions.append(db_extension) # 通过追加到关系集合来建立关联
+            # 或者，如果POIExtension有poi_id: db_extension = models.POIExtension(**extension_data, poi_id=db_poi.id) 
+            # 推荐的方式是依赖 SQLAlchemy 的关系配置，例如 back_populates。
+            # 如果 POIExtension 定义了 relationship(..., back_populates="poi") 并且 POI 定义了 relationship(..., back_populates="extensions")
+            # 那么 db_extension = models.POIExtension(**extension_data, poi=db_poi) 是一个好方法
+            # 或者直接将 db_poi 实例传递给 POIExtension 的构造，如果它接受 poi 实例的话。
+            # 最安全的方式是显式设置外键或使用 append
+
+        db.add(db_poi) # db_extension 会因为 cascade (如果配置了) 或者因为 append 到已持久化的 POI 的关系而被添加
         db.commit()
-        db.refresh(db_poi)
+        db.refresh(db_poi) # 刷新 db_poi 的属性
+        
+        # 如果需要确保 extensions 被加载并包含在返回的序列化对象中:
+        # 如果 POI schema (schemas.POI) 期望 extensions 字段被填充，
+        # Pydantic 在 orm_mode=True 时会尝试访问 db_poi.extensions。
+        # 如果关系是延迟加载的，这可能会触发一次额外的查询。
+        # 如果在 commit 和 refresh 之后关系没有自动填充，可以显式加载：
+        # if poi.extension and not db_poi.extensions: # 检查是否真的需要加载
+        #     db.refresh(db_poi, ['extensions'])
+        # 但通常这由 SQLAlchemy 的关系加载策略处理
+
         return db_poi
     except SQLAlchemyError as e:
         db.rollback()
@@ -302,12 +329,37 @@ def update_poi(db: Session, poi_id: int, poi_update: schemas.POIUpdate) -> model
                     }
                 )
         
-        update_data = poi_update.dict(exclude_unset=True)
+        update_data = poi_update.dict(exclude_unset=True, exclude={'extension'})
         for key, value in update_data.items():
             setattr(db_poi, key, value)
+
+        # 处理扩展信息的更新
+        extension_updated_or_created = False
+        if poi_update.extension is not None:
+            extension_data = poi_update.extension.dict(exclude_unset=True)
+            if db_poi.extensions: # 如果已存在扩展信息
+                existing_extension = db_poi.extensions[0] # 假设只有一个
+                for ext_key, ext_value in extension_data.items():
+                    setattr(existing_extension, ext_key, ext_value)
+                extension_updated_or_created = True
+            else: # 如果不存在扩展信息，则创建新的
+                if extension_data: # 确保有数据才创建
+                    new_extension = models.POIExtension(**extension_data)
+                    db_poi.extensions.append(new_extension)
+                    extension_updated_or_created = True
             
         db.commit()
-        db.refresh(db_poi)
+        db.refresh(db_poi) # 刷新POI对象自身属性
+        
+        # 如果扩展信息被更新或创建，确保关系被加载以便序列化
+        if extension_updated_or_created:
+            # 这会使 SQLAlchemy 知道 extensions 集合可能已更改，并在下次访问时重新加载它。
+            # 对于Pydantic序列化，这通常是必要的。
+            db.expire(db_poi, ['extensions'])
+            # 或者强制立即重新加载:
+            # db.refresh(db_poi, ['extensions']) 
+            # expire 通常更安全，因为它只是标记关系为过期，让 SQLAlchemy 在需要时重新加载。
+
         return db_poi
     except SQLAlchemyError as e:
         db.rollback()

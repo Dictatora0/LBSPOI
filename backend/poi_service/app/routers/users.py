@@ -1,5 +1,5 @@
 from typing import List
-from fastapi import APIRouter, Depends, Path, Body
+from fastapi import APIRouter, Depends, Path, Body, HTTPException
 from sqlalchemy.orm import Session
 from app import crud, schemas, models
 from app.database import get_db
@@ -26,7 +26,7 @@ async def read_user_me(
 ):
     """获取当前用户信息"""
     # 手动转换 SQLAlchemy 模型到字典，确保枚举值被转换为字符串
-    user_dict = {
+    return {
         "id": current_user.id,
         "username": current_user.username,
         "email": current_user.email,
@@ -34,7 +34,6 @@ async def read_user_me(
         "is_active": current_user.is_active,
         "created_at": current_user.created_at
     }
-    return user_dict  # FastAPI 会自动将字典转换为 schemas.User
 
 @router.put("/me", response_model=schemas.User)
 async def update_user_me(
@@ -62,7 +61,24 @@ async def update_user_me(
             ).raise_http_exception()
 
     updated_user = crud.update_user(db, current_user.id, user_update)
-    return updated_user
+    # 手动转换为字典返回，确保枚举值正确处理
+    if updated_user:
+        return {
+            "id": updated_user.id,
+            "username": updated_user.username,
+            "email": updated_user.email,
+            "role": updated_user.role.value,
+            "is_active": updated_user.is_active,
+            "created_at": updated_user.created_at
+        }
+    # 如果 crud.update_user 返回 None (例如用户未找到，虽然在这个逻辑里不太可能)
+    # FastAPI 对于 None 响应 response_model 可能会有不同行为，最好是确保有返回值或抛出HTTPException
+    # 但基于crud.update_user的实现，它在找不到用户时应该返回None，这里应该处理这种情况
+    # 不过，current_user 本身就是从 get_current_active_user 来的，所以它肯定是存在的
+    # crud.update_user 内部 get_user 如果失败会返回None，但它被调用时 user_id 是 current_user.id
+    # 所以 updated_user 不太可能是 None，除非数据库在两次查询间隙发生变化
+    # 为了健壮性，可以加一个 else 抛出异常，但根据现有逻辑，updated_user 不会是None
+    raise HTTPException(status_code=404, detail="User not found after update attempt") # 理论上不应到达这里
 
 # === 用户管理（仅内部维护人员可访问）===
 @router.get("/", response_model=List[schemas.User])
