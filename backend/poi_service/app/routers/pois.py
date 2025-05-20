@@ -11,7 +11,7 @@ router = APIRouter(
     tags=["POI数据"],
 )
 
-# === 公众可访问的POI查询接口 ===
+# 公众可访问的POI查询接口 
 @router.get("/", response_model=schemas.PaginatedResponse)
 async def read_pois(
     province: Optional[str] = None,

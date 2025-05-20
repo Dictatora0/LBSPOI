@@ -7,8 +7,8 @@
 
 | 姓名   | 学号       | 主要分工                                   |
 | ------ | ---------- | ------------------------------------------ |
-| 李富麟   | 2023302111204   | 后端API设计与实现、数据库设计、API测试、项目部署 |
-| 张喆   | 2023302101126   | 前端界面开发、地图组件集成、用户交互体验优化 |
+| 李富麟   | 2023302111204   | 后端API设计与实现、数据库设计、API实现与测试、项目部署、文档撰写 |
+| 张喆   | 2023302101126   | 前端界面开发、地图组件集成、用户交互体验优化、文档撰写 |
 | 萨日娜   | 2023302101082   | 前端界面开发、地图组件集成、用户交互体验优化 |
 
 ## 功能
@@ -89,22 +89,17 @@ GAODE_API_KEY="your-gaode-api-key-here"
 
 4. **初始化数据库**
 
-进入后端服务目录并执行以下命令以创建数据库表：
-```bash
-cd backend/poi_service
-python -c "from app.models import Base; from app.database import engine; Base.metadata.create_all(bind=database.engine)"
-```
+
 **管理员账户**:
 此命令仅创建表结构。系统默认不创建管理员账户。您需要：
   a. 手动通过数据库客户端创建一个用户，并将其 `role` 字段设置为 `admin`。
-  b. 或者，先注册一个普通用户，然后通过数据库客户端修改其 `role` 为 `admin`。我们测试时使用的 `tempadmin` 用户就是这样创建的。
+  b. 或者，先注册一个普通用户，然后通过数据库客户端修改其 `role` 为 `admin`。
 
 5. **导入示例数据** 
 
 ```bash
 cd backend/poi_service
 python import_data.py 中国A级景区数据/A级景区WGS84.csv 
-cd ../.. # 返回项目根目录
 ```
 
 6. **运行应用**
@@ -114,11 +109,11 @@ cd ../.. # 返回项目根目录
 cd backend/poi_service
 uvicorn app.main:app --reload --port 8080
 ```
-
-应用将在 http://localhost:8080 运行。API根路径为 http://localhost:8080/api。
+应用将在 http://localhost:8080 运行。
 
 ## API文档
 
+访问 http://localhost:8080/api/docs 查看Swagger API文档。
 访问 http://localhost:8080/api/redoc 查看ReDoc API文档。
 
 ## 前端应用
@@ -201,18 +196,21 @@ API密钥 (`X-API-KEY` 请求头) 用于访问以下所有地图服务。这些�
 
 项目根目录下提供了API测试脚本 `test_api.sh`，用于对后端API进行自动化测试。
 
-**使用方法:**
+
+**前提**
 
 1.  确保后端服务正在 `http://localhost:8080` 运行。
 2.  确保 `backend/poi_service/.env` 文件已正确配置，特别是 `GAODE_API_KEY`。
 3.  确保数据库中存在一个名为 `tempadmin` 的用户，其密码为 `password123`，并且角色为 `admin`。此用户用于执行脚本中的管理员权限操作。
     (如果不存在，请先注册 `tempadmin`，然后通过数据库将其角色更新为 `admin`: `UPDATE users SET role = 'admin' WHERE username = 'tempadmin';`)
 4.  确保您的系统中已安装 `jq` (JSON命令行处理器)。如果未安装，可以使用包管理器安装 (例如 `sudo apt-get install jq` 或 `brew install jq`)。
-5.  在项目根目录下，给脚本执行权限:
+
+**测试方法:**
+1. 在项目根目录下，给脚本执行权限:
     ```bash
     chmod +x test_api.sh
     ```
-6.  运行脚本:
+运行脚本:
     ```bash
     ./test_api.sh
     ```

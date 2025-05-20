@@ -7,6 +7,10 @@ from app.errors import APIError, ErrorCode
 from app.security import get_current_active_user, get_current_admin_user, verify_api_key
 from pydantic import BaseModel
 
+# 创建用户相关路由
+# 所有用户管理相关的API端点都在此路由下
+# prefix: 所有路由都会自动带有"/users"前缀
+# tags: 用于API文档分组
 router = APIRouter(
     prefix="/users",
     tags=["用户管理"],
@@ -14,18 +18,27 @@ router = APIRouter(
 
 # 添加用于接收请求体的模型
 class UserRoleUpdate(BaseModel):
-    role: models.UserRole
+    """用于更新用户角色的请求体模型"""
+    role: models.UserRole  # 直接使用UserRole枚举，Pydantic会处理验证和序列化
 
 class UserStatusUpdate(BaseModel):
-    is_active: bool  # 直接使用is_active字段
+    """用于更新用户状态的请求体模型"""
+    is_active: bool  # 直接使用is_active字段表示用户是否被启用
 
-# === 用户个人信息管理（所有已认证用户可访问）===
+# 用户个人信息管理（所有已认证用户可访问)
 @router.get("/me", response_model=schemas.User)
 async def read_user_me(
-    current_user: models.User = Depends(get_current_active_user)
+    current_user: models.User = Depends(get_current_active_user)  # 依赖项：当前已认证的活跃用户
 ):
-    """获取当前用户信息"""
+    """
+    获取当前用户信息
+    
+    返回当前已登录用户的详细信息。
+    需要JWT认证。
+    """
     # 手动转换 SQLAlchemy 模型到字典，确保枚举值被转换为字符串
+    # 这样做是因为FastAPI的响应序列化需要基本类型，而不是SQLAlchemy模型
+    # 特别是对于枚举类型，需要使用.value获取其字符串表示
     return {
         "id": current_user.id,
         "username": current_user.username,
@@ -37,13 +50,20 @@ async def read_user_me(
 
 @router.put("/me", response_model=schemas.User)
 async def update_user_me(
-    user_update: schemas.UserUpdate,
-    current_user: models.User = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    user_update: schemas.UserUpdate,  # 请求体：包含要更新的用户信息
+    current_user: models.User = Depends(get_current_active_user),  # 依赖项：当前已认证的活跃用户
+    db: Session = Depends(get_db)  # 依赖项：数据库会话
 ):
-    """更新当前用户信息"""
+    """
+    更新当前用户信息
+    
+    允许已登录用户更新自己的信息，如邮箱和密码。
+    用户名和邮箱会检查唯一性，避免冲突。
+    需要JWT认证。
+    """
     if user_update.email:
         # 检查邮箱是否已被其他用户使用
+        # 注意：如果用户更新为自己当前的邮箱，应该允许
         existing_user = crud.get_user_by_email(db, email=user_update.email)
         if existing_user and existing_user.id != current_user.id:
             raise APIError(
@@ -53,6 +73,7 @@ async def update_user_me(
 
     if user_update.username:
         # 检查用户名是否已被其他用户使用
+        # 同样，如果用户更新为自己当前的用户名，应该允许
         existing_user = crud.get_user_by_username(db, username=user_update.username)
         if existing_user and existing_user.id != current_user.id:
             raise APIError(
@@ -60,6 +81,7 @@ async def update_user_me(
                 message="此用户名已被使用"
             ).raise_http_exception()
 
+    # 调用crud层函数更新用户信息
     updated_user = crud.update_user(db, current_user.id, user_update)
     # 手动转换为字典返回，确保枚举值正确处理
     if updated_user:
@@ -83,21 +105,30 @@ async def update_user_me(
 # === 用户管理（仅内部维护人员可访问）===
 @router.get("/", response_model=List[schemas.User])
 async def read_users(
-    skip: int = 0,
-    limit: int = 100,
-    current_user: models.User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    skip: int = 0,  # 分页参数：跳过前skip条记录
+    limit: int = 100,  # 分页参数：返回最多limit条记录
+    current_user: models.User = Depends(get_current_admin_user),  # 依赖项：当前已认证的管理员用户
+    db: Session = Depends(get_db)  # 依赖项：数据库会话
 ):
-    """获取所有用户列表（仅内部维护人员）"""
+    """
+    获取所有用户列表（仅内部维护人员）
+    
+    返回系统中的所有用户，支持分页查询。
+    仅允许管理员用户访问。
+    需要JWT认证且具有管理员角色。
+    """
+    # 注意：这个检查可能是多余的，因为get_current_admin_user依赖应该已经检查了用户角色
+    # 但保留它可以作为一种额外的安全措施
     if current_user.role != models.UserRole.ADMIN:
         raise APIError(
             code=ErrorCode.PERMISSION_DENIED,
             message="只有内部维护人员可以查看用户列表"
         ).raise_http_exception()
     
+    # 调用crud层函数获取用户列表
     users = crud.get_users(db, skip=skip, limit=limit)
     
-    # 手动转换列表中的每个用户对象
+    # 手动转换列表中的每个用户对象，确保枚举值被正确处理
     return [
         {
             "id": user.id,
@@ -112,17 +143,25 @@ async def read_users(
 
 @router.get("/{user_id}", response_model=schemas.User)
 async def read_user(
-    user_id: int = Path(..., title="用户ID"),
-    current_user: models.User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    user_id: int = Path(..., title="用户ID"),  # 路径参数：要查询的用户ID
+    current_user: models.User = Depends(get_current_admin_user),  # 依赖项：当前已认证的管理员用户
+    db: Session = Depends(get_db)  # 依赖项：数据库会话
 ):
-    """获取指定用户信息（仅内部维护人员）"""
+    """
+    获取指定用户信息（仅内部维护人员）
+    
+    根据用户ID获取用户的详细信息。
+    仅允许管理员用户访问。
+    需要JWT认证且具有管理员角色。
+    """
+    # 同样，这个角色检查可能是多余的
     if current_user.role != models.UserRole.ADMIN:
         raise APIError(
             code=ErrorCode.PERMISSION_DENIED,
             message="只有内部维护人员可以查看用户详情"
         ).raise_http_exception()
         
+    # 调用crud层函数获取特定用户
     db_user = crud.get_user(db, user_id=user_id)
     if not db_user:
         raise APIError(
@@ -142,18 +181,26 @@ async def read_user(
 
 @router.put("/{user_id}/role")
 async def update_user_role(
-    user_id: int,
-    role_update: UserRoleUpdate,
-    current_user: models.User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    user_id: int,  # 路径参数：要更新角色的用户ID
+    role_update: UserRoleUpdate,  # 请求体：包含新的角色信息
+    current_user: models.User = Depends(get_current_admin_user),  # 依赖项：当前已认证的管理员用户
+    db: Session = Depends(get_db)  # 依赖项：数据库会话
 ):
-    """更新用户角色（仅内部维护人员）"""
+    """
+    更新用户角色（仅内部维护人员）
+    
+    允许管理员更改指定用户的角色，如将普通用户提升为管理员或降级。
+    仅允许管理员用户访问。
+    需要JWT认证且具有管理员角色。
+    """
+    # 同样，这个角色检查可能是多余的
     if current_user.role != models.UserRole.ADMIN:
         raise APIError(
             code=ErrorCode.PERMISSION_DENIED,
             message="只有内部维护人员可以修改用户角色"
         ).raise_http_exception()
 
+    # 检查目标用户是否存在
     db_user = crud.get_user(db, user_id=user_id)
     if not db_user:
         raise APIError(
@@ -162,6 +209,7 @@ async def update_user_role(
         ).raise_http_exception()
 
     # 更新用户角色
+    # 直接修改ORM对象并提交，而不是通过crud层函数
     db_user.role = role_update.role
     db.commit()
     db.refresh(db_user)
@@ -170,25 +218,36 @@ async def update_user_role(
 
 @router.put("/{user_id}/status")
 async def toggle_user_status(
-    user_id: int,
-    status_update: UserStatusUpdate,
-    current_user: models.User = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
+    user_id: int,  # 路径参数：要更新状态的用户ID
+    status_update: UserStatusUpdate,  # 请求体：包含新的状态信息
+    current_user: models.User = Depends(get_current_admin_user),  # 依赖项：当前已认证的管理员用户
+    db: Session = Depends(get_db)  # 依赖项：数据库会话
 ):
-    """启用或禁用用户（仅内部维护人员）"""
+    """
+    启用或禁用用户（仅内部维护人员）
+    
+    允许管理员启用或禁用指定用户的账户。
+    禁用的用户将无法登录系统或使用API。
+    管理员不能禁用自己的账户。
+    仅允许管理员用户访问。
+    需要JWT认证且具有管理员角色。
+    """
+    # 同样，这个角色检查可能是多余的
     if current_user.role != models.UserRole.ADMIN:
         raise APIError(
             code=ErrorCode.PERMISSION_DENIED,
             message="只有内部维护人员可以启用或禁用用户"
         ).raise_http_exception()
 
-    # 防止管理员禁用自己
+    # 防止管理员禁用自己，这是一个重要的安全措施
+    # 避免管理员意外锁定自己的账户
     if user_id == current_user.id:
         raise APIError(
             code=ErrorCode.OPERATION_NOT_ALLOWED,
             message="不能修改自己的账户状态"
         ).raise_http_exception()
 
+    # 检查目标用户是否存在
     db_user = crud.get_user(db, user_id=user_id)
     if not db_user:
         raise APIError(
@@ -197,9 +256,11 @@ async def toggle_user_status(
         ).raise_http_exception()
 
     # 更新用户状态
+    # 直接修改ORM对象并提交，而不是通过crud层函数
     db_user.is_active = status_update.is_active
     db.commit()
     db.refresh(db_user)
     
+    # 根据新状态返回不同的消息
     status_message = "启用" if status_update.is_active else "禁用"
     return {"message": f"用户已{status_message}"}
