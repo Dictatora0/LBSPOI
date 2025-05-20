@@ -7,11 +7,11 @@ if (typeof L === 'undefined') {
 }
 
 // 初始化全局变量
-let map = null;
-let markers = {};
-let currentBoxSelect = null;
-let currentRadiusSelect = null;
-let currentRadiusMarker = null;
+let map = null;            // 地图实例
+let markers = {};          // 存储所有POI标记的对象，以POI ID为键
+let currentBoxSelect = null;    // 当前框选图层
+let currentRadiusSelect = null; // 当前半径选择图层
+let currentRadiusMarker = null; // 当前半径中心点标记
 
 // 确保axios可用
 const axios = window.axios || axios;
@@ -38,31 +38,31 @@ const app = new Vue({
     el: '#app',
     data: {
         // 地图状态
-        mapInitialized: false,
-        mapLoading: true,
-        mapError: null,
-        mapToolsExpanded: true, // 地图工具栏是否展开
+        mapInitialized: false,     // 地图是否初始化完成标志
+        mapLoading: true,          // 地图加载状态
+        mapError: null,            // 地图错误信息
+        mapToolsExpanded: true,    // 地图工具栏是否展开
         
         // 地图相关
-        pois: [],
-        selectedPOI: null,
-        totalPOIs: 0,
-        currentPage: 1,
-        pageSize: 10,
-        loading: false,
+        pois: [],                  // 当前显示的POI列表
+        selectedPOI: null,         // 当前选中的POI
+        totalPOIs: 0,              // 总POI数量（用于分页）
+        currentPage: 1,            // 当前页码
+        pageSize: 10,              // 每页显示的数量
+        loading: false,            // 数据加载状态
         
         // 筛选和搜索
-        searchQuery: '',
-        currentSearchMode: 'normal', // 'normal', 'keyword', 'bbox', 'radius' - 用于记录当前搜索模式
-        lastSearchParams: null, // 用于存储最后一次搜索的参数
-        filterForm: {
-            province: '',
-            category: '',
-            level: ''
+        searchQuery: '',           // 搜索关键词
+        currentSearchMode: 'normal', // 搜索模式: 'normal'(普通列表), 'keyword'(关键词搜索), 'bbox'(边界框搜索), 'radius'(半径搜索)
+        lastSearchParams: null,    // 存储最后一次搜索参数，用于在应用筛选条件时保留搜索上下文
+        filterForm: {              // 筛选表单数据
+            province: '',          // 省份筛选
+            category: '',          // 类别筛选
+            level: ''              // 等级筛选
         },
-        provinces: [],
-        categories: [],
-        levels: ['AAAAA', 'AAAA', 'AAA', 'AA', 'A'],
+        provinces: [],             // 省份列表（用于下拉选择）
+        categories: [],            // 类别列表（用于下拉选择）
+        levels: ['AAAAA', 'AAAA', 'AAA', 'AA', 'A'],  // 景点等级列表
         
         // 认证相关
         isLoggedIn: false,
@@ -119,12 +119,52 @@ const app = new Vue({
         addPoiLoading: false,
         poiMarkedLocation: null,
         
+        // 编辑POI
+        showEditPoiDialog: false,
+        editPoiForm: {
+            id: null,
+            name: '',
+            category: '',
+            level: '',
+            province: '',
+            city: '',
+            address: '',
+            description: '',
+            latitude: null,
+            longitude: null,
+            extension: {}
+        },
+        editPoiLoading: false,
+        editPoiMarker: null,
+        
         // 周边设施查询
         showNearbyDialog: false,
         nearbyKeyword: '餐厅',
         nearbyRadius: 1000,
         nearbyFacilities: [],
         nearbyLoading: false,
+        
+        // 逆地理编码
+        showReverseGeocodeDialog: false,
+        reverseGeocodeForm: {
+            lng: null,
+            lat: null
+        },
+        reverseGeocodeResult: null,
+        reverseGeocodeLoading: false,
+        
+        // 路线规划
+        showRouteDialog: false,
+        routeForm: {
+            origin_lng: null,
+            origin_lat: null,
+            dest_lng: null,
+            dest_lat: null,
+            mode: 'walking'
+        },
+        routeResult: null,
+        routeLoading: false,
+        routePath: null, // 存储路线路径图层
         
         // 表单验证规则
         loginRules: {
@@ -652,23 +692,31 @@ const app = new Vue({
         },
         
         // 数据加载方法
+        /**
+         * 加载POI数据，支持分页和筛选条件
+         * 
+         * 根据当前的搜索模式和筛选条件从API获取POI数据
+         * 
+         * @param {number} page - 页码，默认为第1页
+         * @param {object} filters - 筛选条件对象，包含province、category、level等
+         */
         async loadPOIs(page = 1, filters = {}) {
             this.loading = true;
             let loadedSuccessfully = false; // 标记是否成功加载数据
             try {
-                // 构建查询参数
+                // 构建查询参数，合并页码、每页数量和筛选条件
                 const params = {
                     page: page,
                     size: this.pageSize,
                     ...filters
                 };
                 
-                // 如果有搜索关键词且搜索模式是keyword，添加到请求参数
+                // 如果当前是关键词搜索模式且有搜索关键词，添加到请求参数
                 if (this.currentSearchMode === 'keyword' && this.searchQuery.trim() !== '') {
                     params.q = this.searchQuery.trim();
                 }
                 
-                // 构建查询字符串
+                // 构建查询字符串，只包含非空参数
                 const queryString = Object.keys(params)
                     .filter(key => params[key] !== '' && params[key] !== null && params[key] !== undefined)
                     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
@@ -723,14 +771,14 @@ const app = new Vue({
                     this.currentPage = page;
                     loadedSuccessfully = true; // 标记成功加载测试数据
                 } else {
-                    // 有 API 密钥，基于搜索模式选择不同的API端点
+                    // 有 API 密钥，根据不同的搜索模式选择不同的API端点
                     console.log(`[loadPOIs] Attempting to load with API Key: ${apiKey}, search mode: ${this.currentSearchMode}`);
                     
                     let response;
                     
                     // 根据搜索模式选择不同的API端点
                     if (this.currentSearchMode === 'keyword' && this.searchQuery.trim() !== '') {
-                        // 关键词搜索 - 确保同时传递筛选参数
+                        // 关键词搜索模式: 使用/pois/search/端点，同时传递筛选参数
                         console.log('使用关键词搜索API:', `${API_BASE_URL}/pois/search/?${queryString}`);
                         
                         response = await axios.get(`${API_BASE_URL}/pois/search/?${queryString}`, {
@@ -739,7 +787,7 @@ const app = new Vue({
                             }
                         });
                     } else if (this.currentSearchMode === 'bbox' && this.lastSearchParams) {
-                        // 边界框搜索
+                        // 边界框搜索模式: 使用/pois/bbox/端点，合并lastSearchParams(边界框参数)和当前的筛选条件
                         const bboxParams = {
                             ...this.lastSearchParams,
                             ...filters
@@ -751,7 +799,7 @@ const app = new Vue({
                             }
                         });
                     } else if (this.currentSearchMode === 'radius' && this.lastSearchParams) {
-                        // 半径搜索
+                        // 半径搜索模式: 使用/pois/radius/端点，合并lastSearchParams(半径参数)和当前的筛选条件
                         const radiusParams = {
                             ...this.lastSearchParams,
                             ...filters
@@ -763,7 +811,7 @@ const app = new Vue({
                             }
                         });
                     } else {
-                        // 普通列表加载
+                        // 普通列表模式: 使用基本的/pois/端点
                         console.log('使用普通列表API:', `${API_BASE_URL}/pois/?${queryString}`);
                         
                         response = await axios.get(`${API_BASE_URL}/pois/?${queryString}`, {
@@ -850,9 +898,15 @@ const app = new Vue({
         },
         
         // 查询与筛选方法
+        /**
+         * 根据关键词搜索POI
+         * 
+         * 使用搜索框中的关键词查询POI，同时应用当前筛选条件
+         * 成功后将搜索模式设置为'keyword'
+         */
         async searchPOIs() {
             if (this.searchQuery.trim() === '') {
-                // 如果搜索框为空，重置为普通模式
+                // 如果搜索框为空，重置为普通模式并加载POI列表
                 this.currentSearchMode = 'normal';
                 this.lastSearchParams = null;
                 await this.loadPOIs(1, this.filterForm);
@@ -878,10 +932,10 @@ const app = new Vue({
                         q: this.searchQuery.trim(),
                         page: 1,
                         size: this.pageSize,
-                        ...this.filterForm
+                        ...this.filterForm  // 合并当前筛选条件
                     };
                     
-                    // 构建查询字符串
+                    // 构建查询字符串，移除空参数
                     const queryString = Object.keys(params)
                         .filter(key => params[key] !== '' && params[key] !== null && params[key] !== undefined)
                         .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
@@ -921,13 +975,19 @@ const app = new Vue({
             }
         },
         
+        /**
+         * 应用筛选条件
+         * 
+         * 根据当前的搜索模式和筛选表单，发送适当的请求获取符合条件的POI
+         * 本方法是组合查询功能的核心，保证筛选条件与搜索关键词可以同时使用
+         */
         async applyFilters() {
             // 应用筛选时保留当前的搜索模式和最后的搜索参数
             if (this.currentSearchMode === 'normal') {
-                // 普通模式，只使用筛选条件
+                // 普通模式: 只使用筛选条件
                 await this.loadPOIs(1, this.filterForm);
             } else if (this.currentSearchMode === 'keyword') {
-                // 关键词搜索模式，组合关键词和筛选条件
+                // 关键词搜索模式: 组合关键词和筛选条件
                 if (this.searchQuery.trim() !== '') {
                     try {
                         // 获取API密钥
@@ -942,16 +1002,16 @@ const app = new Vue({
                             q: this.searchQuery.trim(),
                             page: 1,
                             size: this.pageSize,
-                            ...this.filterForm
+                            ...this.filterForm  // 合并所有筛选条件
                         };
                         
-                        // 构建查询字符串
+                        // 构建查询字符串，移除空参数
                         const queryString = Object.keys(params)
                             .filter(key => params[key] !== '' && params[key] !== null && params[key] !== undefined)
                             .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
                             .join('&');
                         
-                        // 更新最后的搜索参数
+                        // 更新最后的搜索参数，包含筛选条件，用于后续分页
                         this.lastSearchParams = {
                             q: this.searchQuery.trim(),
                             ...this.filterForm
@@ -995,7 +1055,7 @@ const app = new Vue({
                     await this.loadPOIs(1, this.filterForm);
                 }
             } else if (this.currentSearchMode === 'bbox' && this.lastSearchParams) {
-                // 边界框搜索模式，合并边界参数和筛选条件
+                // 边界框搜索模式: 合并边界参数和筛选条件
                 const bboxParams = {
                     ...this.lastSearchParams,
                     ...this.filterForm
@@ -1007,7 +1067,7 @@ const app = new Vue({
                     bboxParams.max_lng
                 );
             } else if (this.currentSearchMode === 'radius' && this.lastSearchParams) {
-                // 半径搜索模式，合并半径参数和筛选条件
+                // 半径搜索模式: 合并半径参数和筛选条件
                 const radiusParams = {
                     ...this.lastSearchParams,
                     ...this.filterForm
@@ -1025,10 +1085,17 @@ const app = new Vue({
             }
         },
         
+        /**
+         * 重置筛选条件
+         * 
+         * 清空所有筛选条件，但保留当前的搜索模式和关键词
+         * 这允许用户在保持当前搜索上下文的情况下重置筛选条件
+         */
         resetFilters() {
             console.log('重置筛选条件，当前搜索模式:', this.currentSearchMode);
             console.log('重置前的筛选条件:', JSON.stringify(this.filterForm));
             
+            // 清空所有筛选条件
             this.filterForm = {
                 province: '',
                 category: '',
@@ -1058,10 +1125,27 @@ const app = new Vue({
             }
         },
         
+        /**
+         * 处理页码变化
+         * 
+         * 当用户切换页码时，使用当前的搜索模式和筛选条件重新加载数据
+         * 
+         * @param {number} page - 新的页码
+         */
         async handlePageChange(page) {
             await this.loadPOIs(page, this.filterForm);
         },
         
+        /**
+         * 使用边界框查询POI
+         * 
+         * 在指定的地理边界框内搜索POI，同时应用当前的筛选条件
+         * 
+         * @param {number} minLat - 最小纬度（南边界）
+         * @param {number} minLng - 最小经度（西边界）
+         * @param {number} maxLat - 最大纬度（北边界）
+         * @param {number} maxLng - 最大经度（东边界）
+         */
         async queryPOIsByBoundingBox(minLat, minLng, maxLat, maxLng) {
             try {
                 // 获取API密钥
@@ -1092,13 +1176,13 @@ const app = new Vue({
                 if (this.filterForm.category) params.category = this.filterForm.category;
                 if (this.filterForm.level) params.level = this.filterForm.level;
                 
-                // 记录搜索参数
+                // 记录搜索参数，用于后续应用筛选条件
                 this.lastSearchParams = { ...params };
                 
                 // 设置加载状态
                 this.loading = true;
                 
-                // 发送边界框查询请求，确保URL以斜杠结尾
+                // 发送边界框查询请求
                 const response = await axios.post(`${API_BASE_URL}/pois/bbox/`, params, {
                     headers: {
                         'X-API-Key': apiKey
@@ -1137,6 +1221,15 @@ const app = new Vue({
             }
         },
         
+        /**
+         * 使用半径范围查询POI
+         * 
+         * 在指定的中心点和半径范围内搜索POI，同时应用当前的筛选条件
+         * 
+         * @param {number} centerLat - 中心点纬度
+         * @param {number} centerLng - 中心点经度 
+         * @param {number} radius - 搜索半径（米）
+         */
         async queryPOIsByRadius(centerLat, centerLng, radius) {
             try {
                 // 获取API密钥
@@ -1166,13 +1259,13 @@ const app = new Vue({
                 if (this.filterForm.category) params.category = this.filterForm.category;
                 if (this.filterForm.level) params.level = this.filterForm.level;
                 
-                // 记录搜索参数
+                // 记录搜索参数，用于后续应用筛选条件
                 this.lastSearchParams = { ...params };
                 
                 // 设置加载状态
                 this.loading = true;
                 
-                // 发送半径查询请求，确保URL以斜杠结尾
+                // 发送半径查询请求
                 const response = await axios.post(`${API_BASE_URL}/pois/radius/`, params, {
                     headers: {
                         'X-API-Key': apiKey
@@ -1638,7 +1731,12 @@ const app = new Vue({
             }
         },
         
-        // 添加POI功能
+        /**
+         * 打开添加POI对话框
+         * 
+         * 重置表单并提示用户手动输入POI的经纬度坐标
+         * 支持直接手动输入经纬度坐标
+         */
         openAddPoiDialog() {
             if (!this.currentUser || this.currentUser.role !== 'admin') {
                 this.$message.warning('只有管理员可以添加POI');
@@ -1661,15 +1759,164 @@ const app = new Vue({
             this.poiMarkedLocation = null;
             this.showAddPoiDialog = true;
             
-            this.$message.info('请在地图上点击选择POI位置');
+            // 调整对话框位置，使其与地图并排显示而不是完全遮挡地图
+            this.$nextTick(() => {
+                const dialogEl = document.querySelector('.el-dialog');
+                if (dialogEl) {
+                    // 设置对话框样式，移到左侧
+                    dialogEl.style.marginLeft = '20px';
+                    dialogEl.style.position = 'absolute';
+                    dialogEl.style.width = '400px';
+                    dialogEl.style.left = '20px';
+                    dialogEl.style.top = '80px';
+                }
+                
+                // 确保地图可见
+                const mapEl = document.getElementById('map');
+                if (mapEl) {
+                    mapEl.style.zIndex = '0';
+                }
+                
+                // 添加用于地址定位的按钮
+                const footerBtns = document.querySelector('.el-dialog__footer .dialog-footer');
+                if (footerBtns && !document.getElementById('locate-address-btn')) {
+                    const locateBtn = document.createElement('button');
+                    locateBtn.id = 'locate-address-btn';
+                    locateBtn.className = 'el-button el-button--primary el-button--small';
+                    locateBtn.innerHTML = '根据地址定位';
+                    locateBtn.onclick = this.locateByAddress;
+                    footerBtns.prepend(locateBtn);
+                }
+            });
             
-            // 设置地图点击事件来选择位置
+            this.$message.info('请手动输入经纬度坐标，或输入地址后点击"根据地址定位"按钮');
+            
+            // 重置地图视图，确保用户能看到整个地图
+            this.resetMapView();
+        },
+        
+        /**
+         * 更新POI经纬度坐标
+         * 
+         * 当用户手动输入经纬度时，在地图上标记出位置
+         * 确保输入的经纬度是有效的值
+         */
+        updatePoiCoordinates() {
+            const lat = parseFloat(this.newPoiForm.latitude);
+            const lng = parseFloat(this.newPoiForm.longitude);
+            
+            // 验证经纬度值是否有效
+            if (isNaN(lat) || isNaN(lng) || 
+                lat < -90 || lat > 90 || 
+                lng < -180 || lng > 180) {
+                this.$message.error('请输入有效的经纬度坐标。纬度范围：-90到90，经度范围：-180到180');
+                return;
+            }
+            
+            // 在地图上标记位置
             if (map) {
-                map.off('click'); // 移除可能存在的其他点击事件
-                map.on('click', this.markPoiLocation);
+                // 清除之前的标记
+                if (this.poiMarkedLocation) {
+                    map.removeLayer(this.poiMarkedLocation);
+                }
+                
+                // 创建新标记
+                this.poiMarkedLocation = L.marker([lat, lng]).addTo(map);
+                
+                // 调整地图视图到标记位置
+                map.setView([lat, lng], 15);
+                
+                // 显示成功消息
+                this.$message.success(`已标记位置: (${lat.toFixed(6)}, ${lng.toFixed(6)})`);
+                
+                // 尝试获取地址信息
+                this.reverseGeocode(lat, lng);
             }
         },
         
+        /**
+         * 根据地址定位POI位置
+         * 
+         * 使用高德地图的地理编码服务根据输入的地址获取经纬度坐标
+         * 然后在地图上标记该位置并更新表单
+         */
+        async locateByAddress() {
+            if (!this.newPoiForm.address) {
+                this.$message.warning('请先输入地址');
+                return;
+            }
+            
+            // 显示加载提示
+            this.$message.info('正在根据地址查询位置...');
+            
+            try {
+                // 获取API密钥
+                const apiKey = localStorage.getItem('apiKey');
+                if (!apiKey) {
+                    this.$message.warning('未找到API密钥，请登录并生成密钥');
+                    return;
+                }
+                
+                // 构建地理编码请求参数
+                let geocodeParams = `address=${encodeURIComponent(this.newPoiForm.address)}`;
+                
+                // 如果有城市信息，添加到请求中提高精度
+                if (this.newPoiForm.city) {
+                    geocodeParams += `&city=${encodeURIComponent(this.newPoiForm.city)}`;
+                } else if (this.newPoiForm.province) {
+                    geocodeParams += `&city=${encodeURIComponent(this.newPoiForm.province)}`;
+                }
+                
+                // 发送地理编码请求
+                const response = await axios.get(`${API_BASE_URL}/map/geocode/?${geocodeParams}`, {
+                    headers: {
+                        'X-API-Key': apiKey
+                    }
+                });
+                
+                // 检查响应
+                if (response.data && response.data.geocodes && response.data.geocodes.length > 0) {
+                    // 获取第一个结果
+                    const geocode = response.data.geocodes[0];
+                    const location = geocode.location.split(',');
+                    const lng = parseFloat(location[0]);
+                    const lat = parseFloat(location[1]);
+                    
+                    // 更新表单和地图标记
+                    this.newPoiForm.longitude = lng;
+                    this.newPoiForm.latitude = lat;
+                    
+                    // 标记位置
+                    if (map) {
+                        // 清除之前的标记
+                        if (this.poiMarkedLocation) {
+                            map.removeLayer(this.poiMarkedLocation);
+                        }
+                        
+                        // 创建新标记
+                        this.poiMarkedLocation = L.marker([lat, lng]).addTo(map);
+                        
+                        // 调整地图视图
+                        map.setView([lat, lng], 15);
+                    }
+                    
+                    this.$message.success(`已定位到地址: ${geocode.formatted_address}`);
+                } else {
+                    this.$message.warning('未找到对应地址的位置信息');
+                }
+            } catch (error) {
+                console.error('地址定位错误:', error);
+                this.handleApiError(error);
+            }
+        },
+        
+        /**
+         * 在地图上标记POI位置
+         * 
+         * 当用户在地图上点击时，创建或更新标记，并将经纬度坐标保存到表单中
+         * 
+         * @param {Object} e - Leaflet地图点击事件对象
+         */
         markPoiLocation(e) {
             // 清除之前的标记（如果有）
             if (this.poiMarkedLocation) {
@@ -1680,27 +1927,109 @@ const app = new Vue({
             const latlng = e.latlng;
             this.poiMarkedLocation = L.marker(latlng).addTo(map);
             
-            // 更新表单中的经纬度
+            // 更新表单中的经纬度，使用精确值便于后续数据处理
             this.newPoiForm.latitude = latlng.lat;
             this.newPoiForm.longitude = latlng.lng;
             
+            // 显示成功消息，包括格式化的经纬度值
             this.$message.success(`已标记位置: (${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)})`);
+            
+            // 尝试获取位置的地址信息（逆地理编码）
+            this.reverseGeocode(latlng.lat, latlng.lng);
         },
         
+        /**
+         * 逆地理编码获取地址
+         * 
+         * 根据经纬度坐标获取位置的地址信息，自动填充到表单中
+         * 
+         * @param {number} lat - 纬度
+         * @param {number} lng - 经度
+         */
+        async reverseGeocode(lat, lng) {
+            try {
+                // 获取API密钥
+                const apiKey = localStorage.getItem('apiKey');
+                if (!apiKey) {
+                    return; // 无API密钥，静默失败
+                }
+                
+                // 发送逆地理编码请求
+                const response = await axios.get(`${API_BASE_URL}/map/regeocode/?lat=${lat}&lng=${lng}&extensions=base`, {
+                    headers: {
+                        'X-API-Key': apiKey
+                    }
+                });
+                
+                // 检查响应
+                if (response.data && response.data.regeocode) {
+                    const regeocode = response.data.regeocode;
+                    
+                    // 如果表单中还没有填写地址信息，则自动填充
+                    if (!this.newPoiForm.address && regeocode.formatted_address) {
+                        this.newPoiForm.address = regeocode.formatted_address;
+                    }
+                    
+                    // 尝试提取并填充省份和城市信息
+                    if (regeocode.addressComponent) {
+                        const addressComp = regeocode.addressComponent;
+                        
+                        // 如果表单中没有省份信息，则填充
+                        if (!this.newPoiForm.province && addressComp.province) {
+                            this.newPoiForm.province = addressComp.province;
+                        }
+                        
+                        // 如果表单中没有城市信息，则填充
+                        if (!this.newPoiForm.city && addressComp.city) {
+                            // 检查城市是否为空字符串（直辖市的情况）
+                            if (addressComp.city.length > 0) {
+                                this.newPoiForm.city = addressComp.city;
+                            } else if (addressComp.province.endsWith('市')) {
+                                // 直辖市情况，使用省份作为城市
+                                this.newPoiForm.city = addressComp.province;
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('逆地理编码错误:', error);
+                // 静默失败，不影响用户体验
+            }
+        },
+        
+        /**
+         * 关闭添加POI对话框
+         * 
+         * 关闭对话框，清除地图标记，恢复界面布局
+         */
         closeAddPoiDialog() {
-            // 关闭添加POI对话框，清除地图事件和标记
+            // 关闭添加POI对话框，清除地图标记
             this.showAddPoiDialog = false;
             
-            if (map) {
-                map.off('click', this.markPoiLocation);
-            }
-            
+            // 清除位置标记
             if (this.poiMarkedLocation) {
                 map.removeLayer(this.poiMarkedLocation);
                 this.poiMarkedLocation = null;
             }
+            
+            // 恢复对话框样式
+            this.$nextTick(() => {
+                const dialogEl = document.querySelector('.el-dialog');
+                if (dialogEl) {
+                    dialogEl.style.marginLeft = 'auto';
+                    dialogEl.style.position = '';
+                    dialogEl.style.width = '';
+                    dialogEl.style.left = '';
+                    dialogEl.style.top = '';
+                }
+            });
         },
         
+        /**
+         * 提交新POI表单
+         * 
+         * 验证表单数据并发送创建POI的请求
+         */
         async submitNewPoi() {
             // 表单验证
             if (!this.newPoiForm.name.trim()) {
@@ -1709,7 +2038,18 @@ const app = new Vue({
             }
             
             if (!this.newPoiForm.latitude || !this.newPoiForm.longitude) {
-                this.$message.error('请在地图上选择POI位置');
+                this.$message.error('请手动输入经纬度坐标，或在地图上选择POI位置，或使用地址定位');
+                return;
+            }
+            
+            // 验证经纬度值是否有效
+            const lat = parseFloat(this.newPoiForm.latitude);
+            const lng = parseFloat(this.newPoiForm.longitude);
+            
+            if (isNaN(lat) || isNaN(lng) || 
+                lat < -90 || lat > 90 || 
+                lng < -180 || lng > 180) {
+                this.$message.error('请输入有效的经纬度坐标。纬度范围：-90到90，经度范围：-180到180');
                 return;
             }
             
@@ -2151,6 +2491,604 @@ const app = new Vue({
                 this.handleApiError(error);
             } finally {
                 this.profileLoading = false;
+            }
+        },
+        
+        /**
+         * 更新编辑表单中的POI经纬度坐标
+         * 
+         * 当用户在编辑POI时手动输入经纬度，校验并在地图上标记位置
+         */
+        updateEditPoiCoordinates() {
+            const lat = parseFloat(this.editPoiForm.latitude);
+            const lng = parseFloat(this.editPoiForm.longitude);
+            
+            // 验证经纬度值是否有效
+            if (isNaN(lat) || isNaN(lng) || 
+                lat < -90 || lat > 90 || 
+                lng < -180 || lng > 180) {
+                this.$message.error('请输入有效的经纬度坐标。纬度范围：-90到90，经度范围：-180到180');
+                return;
+            }
+            
+            // 在地图上标记位置
+            if (map) {
+                // 清除之前的标记
+                if (this.editPoiMarker) {
+                    map.removeLayer(this.editPoiMarker);
+                }
+                
+                // 创建新标记
+                this.editPoiMarker = L.marker([lat, lng]).addTo(map);
+                
+                // 调整地图视图到标记位置
+                map.setView([lat, lng], 15);
+                
+                // 显示成功消息
+                this.$message.success(`已标记位置: (${lat.toFixed(6)}, ${lng.toFixed(6)})`);
+                
+                // 尝试获取地址信息
+                this.reverseGeocode(lat, lng);
+            }
+        },
+        
+        /**
+         * 打开编辑POI对话框
+         * 
+         * @param {Object} poi - 要编辑的POI对象
+         */
+        openEditPoiDialog(poi) {
+            if (!this.currentUser || this.currentUser.role !== 'admin') {
+                this.$message.warning('只有管理员可以编辑POI');
+                return;
+            }
+            
+            // 克隆POI数据到编辑表单
+            this.editPoiForm = {
+                id: poi.id,
+                name: poi.name,
+                category: poi.category,
+                level: poi.level,
+                province: poi.province,
+                city: poi.city || '',
+                address: poi.address || '',
+                description: poi.description || '',
+                latitude: poi.latitude,
+                longitude: poi.longitude,
+                extension: poi.extension || {}
+            };
+            
+            this.showEditPoiDialog = true;
+            
+            // 调整对话框位置，类似于添加POI对话框
+            this.$nextTick(() => {
+                const dialogEl = document.querySelector('.el-dialog');
+                if (dialogEl) {
+                    dialogEl.style.marginLeft = '20px';
+                    dialogEl.style.position = 'absolute';
+                    dialogEl.style.width = '400px';
+                    dialogEl.style.left = '20px';
+                    dialogEl.style.top = '80px';
+                }
+                
+                // 确保地图可见
+                const mapEl = document.getElementById('map');
+                if (mapEl) {
+                    mapEl.style.zIndex = '0';
+                }
+                
+                // 添加用于地址定位的按钮
+                const footerBtns = document.querySelector('.el-dialog__footer .dialog-footer');
+                if (footerBtns && !document.getElementById('locate-address-btn-edit')) {
+                    const locateBtn = document.createElement('button');
+                    locateBtn.id = 'locate-address-btn-edit';
+                    locateBtn.className = 'el-button el-button--primary el-button--small';
+                    locateBtn.innerHTML = '根据地址定位';
+                    locateBtn.onclick = this.locateByAddressForEdit;
+                    footerBtns.prepend(locateBtn);
+                }
+            });
+            
+            // 在地图上标记POI位置
+            if (map && poi.latitude && poi.longitude) {
+                // 清除之前的标记
+                if (this.editPoiMarker) {
+                    map.removeLayer(this.editPoiMarker);
+                }
+                
+                // 创建新标记
+                this.editPoiMarker = L.marker([poi.latitude, poi.longitude]).addTo(map);
+                
+                // 调整地图视图到标记位置
+                map.setView([poi.latitude, poi.longitude], 15);
+            }
+            
+            this.$message.info('请修改POI信息，可以直接编辑经纬度坐标');
+        },
+        
+        /**
+         * 关闭编辑POI对话框
+         */
+        closeEditPoiDialog() {
+            this.showEditPoiDialog = false;
+            
+            // 清除位置标记
+            if (this.editPoiMarker && map) {
+                map.removeLayer(this.editPoiMarker);
+                this.editPoiMarker = null;
+            }
+            
+            // 恢复对话框样式
+            this.$nextTick(() => {
+                const dialogEl = document.querySelector('.el-dialog');
+                if (dialogEl) {
+                    dialogEl.style.marginLeft = 'auto';
+                    dialogEl.style.position = '';
+                    dialogEl.style.width = '';
+                    dialogEl.style.left = '';
+                    dialogEl.style.top = '';
+                }
+            });
+        },
+        
+        /**
+         * 根据地址定位POI位置（编辑模式）
+         * 与添加POI时的地址定位类似，但用于编辑表单
+         */
+        async locateByAddressForEdit() {
+            if (!this.editPoiForm.address) {
+                this.$message.warning('请先输入地址');
+                return;
+            }
+            
+            // 显示加载提示
+            this.$message.info('正在根据地址查询位置...');
+            
+            try {
+                // 获取API密钥
+                const apiKey = localStorage.getItem('apiKey');
+                if (!apiKey) {
+                    this.$message.warning('未找到API密钥，请登录并生成密钥');
+                    return;
+                }
+                
+                // 构建地理编码请求参数
+                let geocodeParams = `address=${encodeURIComponent(this.editPoiForm.address)}`;
+                
+                // 如果有城市信息，添加到请求中提高精度
+                if (this.editPoiForm.city) {
+                    geocodeParams += `&city=${encodeURIComponent(this.editPoiForm.city)}`;
+                } else if (this.editPoiForm.province) {
+                    geocodeParams += `&city=${encodeURIComponent(this.editPoiForm.province)}`;
+                }
+                
+                // 发送地理编码请求
+                const response = await axios.get(`${API_BASE_URL}/map/geocode/?${geocodeParams}`, {
+                    headers: {
+                        'X-API-Key': apiKey
+                    }
+                });
+                
+                // 检查响应
+                if (response.data && response.data.geocodes && response.data.geocodes.length > 0) {
+                    // 获取第一个结果
+                    const geocode = response.data.geocodes[0];
+                    const location = geocode.location.split(',');
+                    const lng = parseFloat(location[0]);
+                    const lat = parseFloat(location[1]);
+                    
+                    // 更新表单和地图标记
+                    this.editPoiForm.longitude = lng;
+                    this.editPoiForm.latitude = lat;
+                    
+                    // 标记位置
+                    if (map) {
+                        // 清除之前的标记
+                        if (this.editPoiMarker) {
+                            map.removeLayer(this.editPoiMarker);
+                        }
+                        
+                        // 创建新标记
+                        this.editPoiMarker = L.marker([lat, lng]).addTo(map);
+                        
+                        // 调整地图视图
+                        map.setView([lat, lng], 15);
+                    }
+                    
+                    this.$message.success(`已定位到地址: ${geocode.formatted_address}`);
+                } else {
+                    this.$message.warning('未找到对应地址的位置信息');
+                }
+            } catch (error) {
+                console.error('地址定位错误:', error);
+                this.handleApiError(error);
+            }
+        },
+        
+        /**
+         * 更新POI信息
+         * 
+         * 验证表单数据并发送更新POI的请求
+         */
+        async submitEditPoi() {
+            // 表单验证
+            if (!this.editPoiForm.name.trim()) {
+                this.$message.error('请输入POI名称');
+                return;
+            }
+            
+            if (!this.editPoiForm.latitude || !this.editPoiForm.longitude) {
+                this.$message.error('请确保经纬度坐标有效');
+                return;
+            }
+            
+            // 验证经纬度值是否有效
+            const lat = parseFloat(this.editPoiForm.latitude);
+            const lng = parseFloat(this.editPoiForm.longitude);
+            
+            if (isNaN(lat) || isNaN(lng) || 
+                lat < -90 || lat > 90 || 
+                lng < -180 || lng > 180) {
+                this.$message.error('请输入有效的经纬度坐标。纬度范围：-90到90，经度范围：-180到180');
+                return;
+            }
+            
+            this.editPoiLoading = true;
+            
+            try {
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    this.$message.warning('未登录或登录已过期');
+                    return;
+                }
+                
+                // 发送更新POI请求
+                const response = await axios.put(`${API_BASE_URL}/pois/${this.editPoiForm.id}`, this.editPoiForm, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                // 更新列表和地图中的POI
+                const updatedPoi = response.data;
+                // 更新管理员POIs列表
+                const index = this.adminPOIs.findIndex(p => p.id === updatedPoi.id);
+                if (index !== -1) {
+                    this.$set(this.adminPOIs, index, updatedPoi);
+                }
+                
+                // 更新主POI列表中的POI
+                const mainIndex = this.pois.findIndex(p => p.id === updatedPoi.id);
+                if (mainIndex !== -1) {
+                    this.$set(this.pois, mainIndex, updatedPoi);
+                }
+                
+                // 更新地图标记
+                if (map && markers[updatedPoi.id]) {
+                    map.removeLayer(markers[updatedPoi.id]);
+                    const marker = L.marker([updatedPoi.latitude, updatedPoi.longitude])
+                        .bindPopup(`<b>${updatedPoi.name}</b><br>${updatedPoi.province} ${updatedPoi.city || ''}`)
+                        .addTo(map);
+                    
+                    // 绑定点击事件
+                    marker.on('click', () => {
+                        this.selectPOI(updatedPoi);
+                    });
+                    
+                    markers[updatedPoi.id] = marker;
+                }
+                
+                this.$message.success('POI更新成功');
+                this.closeEditPoiDialog();
+                
+            } catch (error) {
+                this.handleApiError(error);
+            } finally {
+                this.editPoiLoading = false;
+            }
+        },
+        
+        /**
+         * 删除POI
+         * 
+         * @param {number} poiId - 要删除的POI ID
+         */
+        async deletePoi(poiId) {
+            if (!this.currentUser || this.currentUser.role !== 'admin') {
+                this.$message.warning('只有管理员可以删除POI');
+                return;
+            }
+            
+            try {
+                // 提示用户确认删除操作
+                await this.$confirm('此操作将永久删除该POI，是否继续?', '提示', {
+                    confirmButtonText: '确定',
+                    cancelButtonText: '取消',
+                    type: 'warning'
+                });
+                
+                const token = localStorage.getItem('token');
+                if (!token) {
+                    this.$message.warning('未登录或登录已过期');
+                    return;
+                }
+                
+                // 发送删除POI请求
+                await axios.delete(`${API_BASE_URL}/pois/${poiId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                // 从管理员POI列表中移除
+                this.adminPOIs = this.adminPOIs.filter(p => p.id !== poiId);
+                
+                // 从主POI列表中移除
+                this.pois = this.pois.filter(p => p.id !== poiId);
+                
+                // 从地图上移除标记
+                if (map && markers[poiId]) {
+                    map.removeLayer(markers[poiId]);
+                    delete markers[poiId];
+                }
+                
+                // 如果当前选中的POI是被删除的POI，清除选中
+                if (this.selectedPOI && this.selectedPOI.id === poiId) {
+                    this.selectedPOI = null;
+                }
+                
+                this.$message.success('POI删除成功');
+                
+            } catch (error) {
+                if (error === 'cancel') {
+                    // 用户取消了删除操作
+                    this.$message.info('已取消删除');
+                } else {
+                    this.handleApiError(error);
+                }
+            }
+        },
+        
+        /**
+         * 打开逆地理编码对话框
+         */
+        openReverseGeocodeDialog() {
+            // 如果有选中的POI，预填写其坐标
+            if (this.selectedPOI) {
+                this.reverseGeocodeForm.lng = this.selectedPOI.longitude;
+                this.reverseGeocodeForm.lat = this.selectedPOI.latitude;
+            } else {
+                // 否则使用地图中心点坐标
+                if (map) {
+                    const center = map.getCenter();
+                    this.reverseGeocodeForm.lng = center.lng;
+                    this.reverseGeocodeForm.lat = center.lat;
+                } else {
+                    // 默认使用北京天安门坐标
+                    this.reverseGeocodeForm.lng = 116.397;
+                    this.reverseGeocodeForm.lat = 39.9087;
+                }
+            }
+            
+            this.reverseGeocodeResult = null;
+            this.showReverseGeocodeDialog = true;
+        },
+        
+        /**
+         * 执行逆地理编码
+         * 使用高德地图API，根据经纬度获取地址信息
+         */
+        async performReverseGeocode() {
+            const lng = parseFloat(this.reverseGeocodeForm.lng);
+            const lat = parseFloat(this.reverseGeocodeForm.lat);
+            
+            // 验证经纬度
+            if (isNaN(lng) || isNaN(lat) ||
+                lng < -180 || lng > 180 ||
+                lat < -90 || lat > 90) {
+                this.$message.error('请输入有效的经纬度坐标');
+                return;
+            }
+            
+            this.reverseGeocodeLoading = true;
+            
+            try {
+                // 获取API密钥
+                const apiKey = localStorage.getItem('apiKey');
+                if (!apiKey) {
+                    this.$message.warning('未找到API密钥，请登录并生成密钥');
+                    return;
+                }
+                
+                // 调用逆地理编码API
+                const response = await axios.get(`${API_BASE_URL}/map/regeocode/`, {
+                    params: {
+                        lng: lng,
+                        lat: lat
+                    },
+                    headers: {
+                        'X-API-Key': apiKey
+                    }
+                });
+                
+                // 处理响应
+                this.reverseGeocodeResult = {
+                    formatted_address: response.data.formatted_address,
+                    addressComponent: response.data.addressComponent
+                };
+                
+                // 在地图上标记该位置
+                if (map) {
+                    // 清除已有标记
+                    for (const key in markers) {
+                        if (key.startsWith('temp_regeocode_')) {
+                            map.removeLayer(markers[key]);
+                            delete markers[key];
+                        }
+                    }
+                    
+                    // 添加新标记
+                    const marker = L.marker([lat, lng])
+                        .bindPopup(`<b>查询位置</b><br>${response.data.formatted_address}`)
+                        .addTo(map);
+                    
+                    markers['temp_regeocode_marker'] = marker;
+                    marker.openPopup();
+                    
+                    // 调整地图视图
+                    map.setView([lat, lng], 16);
+                }
+                
+                this.$message.success('逆地理编码查询成功');
+                
+            } catch (error) {
+                this.handleApiError(error);
+            } finally {
+                this.reverseGeocodeLoading = false;
+            }
+        },
+        
+        /**
+         * 打开路线规划对话框
+         */
+        openRouteDialog() {
+            // 如果有选中的POI，将其设为目的地
+            if (this.selectedPOI) {
+                this.routeForm.dest_lng = this.selectedPOI.longitude;
+                this.routeForm.dest_lat = this.selectedPOI.latitude;
+                
+                // 如果地图已初始化，使用地图中心为起点
+                if (map) {
+                    const center = map.getCenter();
+                    this.routeForm.origin_lng = center.lng;
+                    this.routeForm.origin_lat = center.lat;
+                } else {
+                    // 默认使用北京天安门坐标
+                    this.routeForm.origin_lng = 116.3974;
+                    this.routeForm.origin_lat = 39.9087;
+                }
+            } else {
+                // 如果没有选中POI，使用默认值
+                this.routeForm.origin_lng = 116.3974; // 天安门
+                this.routeForm.origin_lat = 39.9087;
+                this.routeForm.dest_lng = 116.3976; // 故宫
+                this.routeForm.dest_lat = 39.9175;
+            }
+            
+            this.routeResult = null;
+            this.showRouteDialog = true;
+        },
+        
+        /**
+         * 规划路线
+         * 使用高德地图API规划两点间路线
+         */
+        async planRoute() {
+            // 验证表单
+            const originLng = parseFloat(this.routeForm.origin_lng);
+            const originLat = parseFloat(this.routeForm.origin_lat);
+            const destLng = parseFloat(this.routeForm.dest_lng);
+            const destLat = parseFloat(this.routeForm.dest_lat);
+            
+            // 验证经纬度
+            if (isNaN(originLng) || isNaN(originLat) || isNaN(destLng) || isNaN(destLat) ||
+                originLng < -180 || originLng > 180 || destLng < -180 || destLng > 180 ||
+                originLat < -90 || originLat > 90 || destLat < -90 || destLat > 90) {
+                this.$message.error('请输入有效的经纬度坐标');
+                return;
+            }
+            
+            this.routeLoading = true;
+            
+            try {
+                // 获取API密钥
+                const apiKey = localStorage.getItem('apiKey');
+                if (!apiKey) {
+                    this.$message.warning('未找到API密钥，请登录并生成密钥');
+                    return;
+                }
+                
+                // 调用路线规划API
+                const response = await axios.get(`${API_BASE_URL}/map/route/`, {
+                    params: {
+                        origin_lng: originLng,
+                        origin_lat: originLat,
+                        dest_lng: destLng,
+                        dest_lat: destLat,
+                        mode: this.routeForm.mode
+                    },
+                    headers: {
+                        'X-API-Key': apiKey
+                    }
+                });
+                
+                // 处理响应
+                this.routeResult = response.data;
+                
+                // 在地图上显示路线
+                if (map) {
+                    // 清除已有路线和标记
+                    if (this.routePath) {
+                        map.removeLayer(this.routePath);
+                    }
+                    
+                    for (const key in markers) {
+                        if (key.startsWith('temp_route_')) {
+                            map.removeLayer(markers[key]);
+                            delete markers[key];
+                        }
+                    }
+                    
+                    // 添加起点和终点标记
+                    const startMarker = L.marker([originLat, originLng])
+                        .bindPopup('起点')
+                        .addTo(map);
+                    
+                    const endMarker = L.marker([destLat, destLng])
+                        .bindPopup('终点')
+                        .addTo(map);
+                    
+                    markers['temp_route_start'] = startMarker;
+                    markers['temp_route_end'] = endMarker;
+                    
+                    // 解析并绘制路线
+                    if (response.data.steps && response.data.steps.length > 0) {
+                        const pathPoints = [];
+                        
+                        response.data.steps.forEach(step => {
+                            if (step.polyline) {
+                                // 解析polyline字符串为坐标点数组
+                                const points = step.polyline.split(';').map(point => {
+                                    const [lng, lat] = point.split(',').map(parseFloat);
+                                    return [lat, lng];
+                                });
+                                
+                                pathPoints.push(...points);
+                            }
+                        });
+                        
+                        if (pathPoints.length > 0) {
+                            // 创建路线图层
+                            this.routePath = L.polyline(pathPoints, {
+                                color: 'blue',
+                                weight: 5,
+                                opacity: 0.7
+                            }).addTo(map);
+                            
+                            // 调整地图视图以显示整个路线
+                            map.fitBounds(this.routePath.getBounds(), {
+                                padding: [50, 50]
+                            });
+                        }
+                    }
+                }
+                
+                this.$message.success('路线规划成功');
+                
+            } catch (error) {
+                this.handleApiError(error);
+            } finally {
+                this.routeLoading = false;
             }
         }
     }

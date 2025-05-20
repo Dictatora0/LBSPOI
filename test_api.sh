@@ -220,6 +220,48 @@ if [ -n "$ADMIN_TOKEN" ] && [ "$ADMIN_TOKEN" != "null" ]; then
     else
         echo "未能从创建POI响应中获取ID，跳过更新和删除测试。"
     fi
+    
+    # 5.1.2 手动输入精确经纬度测试
+    echo "测试手动输入精确经纬度创建POI..."
+    MANUAL_POI_NAME="精确经纬度POI_$(date +%s)"
+    MANUAL_POI_RESPONSE=$(curl -s -X POST "$BASE_URL/pois/" \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"name\":\"$MANUAL_POI_NAME\",\"province\":\"北京市\",\"city\":\"北京市\",\"category\":\"历史古迹\",\"level\":\"AAAAA\",\"longitude\":116.397128,\"latitude\":39.918884,\"address\":\"北京市东城区景山前街4号\",\"description\":\"手动输入经纬度测试\",\"extension\":{\"phone\":\"01085007421\",\"website\":\"https://www.dpm.org.cn\"}}")
+    
+    echo "使用精确经纬度创建POI ($MANUAL_POI_NAME) 结果:"
+    echo "$MANUAL_POI_RESPONSE" | $JQ_CMD
+    echo ""
+    
+    MANUAL_POI_ID=$(echo "$MANUAL_POI_RESPONSE" | $JQ_CMD -r .id)
+    
+    if [ "$MANUAL_POI_ID" != "null" ] && [ -n "$MANUAL_POI_ID" ]; then
+        # 获取并验证POI详情
+        run_test "获取手动创建的POI详情 (ID: $MANUAL_POI_ID)" \
+            "curl -s -X GET '$BASE_URL/pois/$MANUAL_POI_ID' \
+                -H 'X-API-KEY: $USER_API_KEY' | $JQ_CMD"
+        
+        # 使用PATCH方法部分更新POI
+        run_test "部分更新手动创建的POI (ID: $MANUAL_POI_ID) - 仅更新城市和描述" \
+            "curl -s -X PUT '$BASE_URL/pois/$MANUAL_POI_ID' \
+                -H 'Authorization: Bearer $ADMIN_TOKEN' \
+                -H 'Content-Type: application/json' \
+                -d '{\"city\":\"北京市东城区\",\"description\":\"更新后的描述\"}' | $JQ_CMD"
+        
+        # 完全更新POI
+        run_test "完全更新手动创建的POI (ID: $MANUAL_POI_ID) - 更新所有字段" \
+            "curl -s -X PUT '$BASE_URL/pois/$MANUAL_POI_ID' \
+                -H 'Authorization: Bearer $ADMIN_TOKEN' \
+                -H 'Content-Type: application/json' \
+                -d '{\"name\":\"${MANUAL_POI_NAME}_已全部更新\",\"province\":\"北京市\",\"city\":\"北京市东城区\",\"category\":\"历史古迹\",\"level\":\"AAAAA\",\"longitude\":116.397128,\"latitude\":39.918884,\"address\":\"北京市东城区景山前街4号\",\"description\":\"完全更新测试\",\"extension\":{\"phone\":\"01085007421\",\"website\":\"https://www.dpm.org.cn\",\"opening_hours\":\"8:30-17:00\"}}' | $JQ_CMD"
+        
+        # 最后删除创建的POI
+        run_test "删除手动创建的POI (ID: $MANUAL_POI_ID)" \
+            "curl -s -X DELETE '$BASE_URL/pois/$MANUAL_POI_ID' \
+                -H 'Authorization: Bearer $ADMIN_TOKEN' | $JQ_CMD"
+    else
+        echo "未能从手动创建POI响应中获取ID，跳过相关测试。"
+    fi
 
     # 5.2 用户管理
     # 假设 $TEST_USERNAME (ID需要动态获取) 是我们要管理的用户
