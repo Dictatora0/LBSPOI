@@ -49,6 +49,10 @@ async def read_pois(
 @router.get("/search", response_model=schemas.PaginatedResponse)
 async def search_pois(
     q: str = Query(..., description="搜索关键词"),
+    province: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    level: Optional[str] = None, 
     page: int = Query(1, ge=1),
     size: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -56,11 +60,16 @@ async def search_pois(
 ):
     """
     通过关键词搜索POI
+    支持额外的筛选条件：省份、城市、类别和等级
     """
     offset = (page - 1) * size
-    result = crud.search_pois_by_name(
+    result = crud.search_pois_by_name_with_filters(
         db=db,
         name_query=q,
+        province=province,
+        city=city,
+        category=category,
+        level=level,
         offset=offset,
         limit=size
     )

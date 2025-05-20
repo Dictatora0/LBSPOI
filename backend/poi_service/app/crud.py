@@ -268,10 +268,10 @@ def get_pois(
     获取POI列表，支持多种过滤条件和分页
     
     :param db: 数据库会话
-    :param province: 可选的省份过滤条件
-    :param city: 可选的城市过滤条件 
-    :param category: 可选的类别过滤条件
-    :param level: 可选的级别过滤条件
+    :param province: 可选的省份过滤条件 (模糊匹配)
+    :param city: 可选的城市过滤条件 (模糊匹配)
+    :param category: 可选的类别过滤条件 (模糊匹配)
+    :param level: 可选的级别过滤条件 (灵活匹配，支持A/AA/AAA和1A/2A/3A格式)
     :param has_extension: 可选的是否有扩展信息过滤条件
     :param offset: 分页偏移量
     :param limit: 每页条数
@@ -281,15 +281,46 @@ def get_pois(
     try:
         query = db.query(models.POI)
         
-        # 应用过滤条件
+        # 应用过滤条件 - 使用模糊匹配和大小写不敏感
         if province:
-            query = query.filter(models.POI.province == province)
+            # 处理省份名称中可能带有"省"/"市"/"自治区"的情况
+            province_core = province.replace("省", "").replace("市", "").replace("自治区", "").replace("特别行政区", "")
+            query = query.filter(or_(
+                models.POI.province.ilike(f"%{province}%"),  # 匹配完整名称
+                models.POI.province.ilike(f"%{province_core}%")  # 匹配核心名称
+            ))
+        
         if city:
-            query = query.filter(models.POI.city == city)
+            # 处理城市名称中可能带有"市"/"区"/"县"的情况
+            city_core = city.replace("市", "").replace("区", "").replace("县", "")
+            query = query.filter(or_(
+                models.POI.city.ilike(f"%{city}%"),  # 匹配完整名称
+                models.POI.city.ilike(f"%{city_core}%")  # 匹配核心名称
+            ))
+        
         if category:
-            query = query.filter(models.POI.category == category)
+            query = query.filter(models.POI.category.ilike(f"%{category}%"))
+        
         if level:
-            query = query.filter(models.POI.level == level)
+            # 处理不同格式的等级表示：AAAAA/5A, AAAA/4A, AAA/3A, AA/2A, A/1A
+            level_mapping = {
+                "AAAAA": "5A", "AAAA": "4A", "AAA": "3A", "AA": "2A", "A": "1A",
+                "5A": "AAAAA", "4A": "AAAA", "3A": "AAA", "2A": "AA", "1A": "A"
+            }
+            
+            # 如果提供的level存在于映射中，获取其对应的替代表示
+            alternative_level = level_mapping.get(level, "")
+            
+            if alternative_level:
+                # 同时查询原始等级和替代等级
+                query = query.filter(or_(
+                    models.POI.level == level,
+                    models.POI.level == alternative_level
+                ))
+            else:
+                # 如果没有找到替代表示，则仅使用原始等级精确匹配
+                query = query.filter(models.POI.level == level)
+
         if has_extension is not None:
             if has_extension:
                 query = query.filter(models.POI.extensions.any())  # 有扩展信息
@@ -300,10 +331,11 @@ def get_pois(
         total = query.count()
         
         # 应用分页并获取结果
-        items = query.offset(offset).limit(limit).all()
+        items = query.order_by(models.POI.id).offset(offset).limit(limit).all()
         
         return {"items": items, "total": total}
     except SQLAlchemyError as e:
+        db.rollback()  # 确保回滚任何未完成的事务
         raise APIError(
             code=ErrorCode.DATABASE_ERROR,
             message="数据库查询错误",
@@ -320,13 +352,101 @@ def search_pois_by_name(db: Session, name_query: str, offset: int = 0, limit: in
     :param limit: 每页条数
     :return: 包含搜索结果和总数的字典
     """
-    search_pattern = f"%{name_query}%"  # 构建LIKE模式匹配字符串
-    query = db.query(models.POI).filter(models.POI.name.like(search_pattern))
+    try:
+        search_pattern = f"%{name_query}%"  # 构建LIKE模式匹配字符串
+        query = db.query(models.POI).filter(models.POI.name.ilike(search_pattern))  # 使用ilike进行大小写不敏感匹配
+        
+        total = query.count()
+        items = query.order_by(models.POI.id).offset(offset).limit(limit).all()
+        
+        return {"items": items, "total": total}
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise APIError(
+            code=ErrorCode.DATABASE_ERROR,
+            message="搜索POI失败",
+            details={"error": str(e)}
+        )
+
+def search_pois_by_name_with_filters(
+    db: Session, 
+    name_query: str,
+    province: Optional[str] = None,
+    city: Optional[str] = None,
+    category: Optional[str] = None,
+    level: Optional[str] = None,
+    offset: int = 0, 
+    limit: int = 10
+):
+    """
+    根据名称模糊搜索POI，并支持额外的筛选条件
     
-    total = query.count()
-    items = query.offset(offset).limit(limit).all()
-    
-    return {"items": items, "total": total}
+    :param db: 数据库会话
+    :param name_query: 搜索关键词
+    :param province: 可选的省份过滤 (模糊匹配)
+    :param city: 可选的城市过滤 (模糊匹配)
+    :param category: 可选的类别过滤 (模糊匹配)
+    :param level: 可选的级别过滤 (灵活匹配)
+    :param offset: 分页偏移量
+    :param limit: 每页条数
+    :return: 包含搜索结果和总数的字典
+    """
+    try:
+        # 首先根据名称搜索
+        search_pattern = f"%{name_query}%"
+        query = db.query(models.POI).filter(models.POI.name.ilike(search_pattern))
+        
+        # 添加属性筛选条件 - 使用模糊匹配
+        if province:
+            # 处理省份名称中可能带有"省"/"市"/"自治区"的情况
+            province_core = province.replace("省", "").replace("市", "").replace("自治区", "").replace("特别行政区", "")
+            query = query.filter(or_(
+                models.POI.province.ilike(f"%{province}%"),  # 匹配完整名称
+                models.POI.province.ilike(f"%{province_core}%")  # 匹配核心名称
+            ))
+
+        if city:
+            # 处理城市名称中可能带有"市"/"区"/"县"的情况
+            city_core = city.replace("市", "").replace("区", "").replace("县", "")
+            query = query.filter(or_(
+                models.POI.city.ilike(f"%{city}%"),  # 匹配完整名称
+                models.POI.city.ilike(f"%{city_core}%")  # 匹配核心名称
+            ))
+
+        if category:
+            query = query.filter(models.POI.category.ilike(f"%{category}%"))
+            
+        if level:
+            # 处理不同格式的等级表示：AAAAA/5A, AAAA/4A, AAA/3A, AA/2A, A/1A
+            level_mapping = {
+                "AAAAA": "5A", "AAAA": "4A", "AAA": "3A", "AA": "2A", "A": "1A",
+                "5A": "AAAAA", "4A": "AAAA", "3A": "AAA", "2A": "AA", "1A": "A"
+            }
+            
+            # 如果提供的level存在于映射中，获取其对应的替代表示
+            alternative_level = level_mapping.get(level, "")
+            
+            if alternative_level:
+                # 同时查询原始等级和替代等级
+                query = query.filter(or_(
+                    models.POI.level == level,
+                    models.POI.level == alternative_level
+                ))
+            else:
+                # 如果没有找到替代表示，则仅使用原始等级精确匹配
+                query = query.filter(models.POI.level == level)
+        
+        total = query.count()
+        items = query.order_by(models.POI.id).offset(offset).limit(limit).all()
+        
+        return {"items": items, "total": total}
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise APIError(
+            code=ErrorCode.DATABASE_ERROR,
+            message="搜索POI失败",
+            details={"error": str(e)}
+        )
 
 def get_pois_in_bounding_box(
     db: Session, 
@@ -351,43 +471,81 @@ def get_pois_in_bounding_box(
     :param min_lat: 最小纬度（下边界）
     :param max_lng: 最大经度（右边界）
     :param max_lat: 最大纬度（上边界）
-    :param q: 可选的名称关键词
-    :param province: 可选的省份过滤
-    :param city: 可选的城市过滤
-    :param category: 可选的类别过滤
-    :param level: 可选的级别过滤
+    :param q: 可选的名称关键词 (大小写不敏感)
+    :param province: 可选的省份过滤 (模糊匹配)
+    :param city: 可选的城市过滤 (模糊匹配)
+    :param category: 可选的类别过滤 (模糊匹配)
+    :param level: 可选的级别过滤 (灵活匹配)
     :param offset: 分页偏移量
     :param limit: 每页条数
     :return: 包含POI列表和总数的字典
     """
-    # 首先筛选在边界框内的POI
-    query = db.query(models.POI).filter(
-        models.POI.longitude >= min_lng,
-        models.POI.longitude <= max_lng,
-        models.POI.latitude >= min_lat,
-        models.POI.latitude <= max_lat
-    )
-    
-    # 添加名称搜索条件
-    if q:
-        search_pattern = f"%{q}%"
-        query = query.filter(models.POI.name.like(search_pattern))
-    
-    # 添加属性筛选条件
-    if province:
-        query = query.filter(models.POI.province == province)
-    if city:
-        query = query.filter(models.POI.city == city)
-    if category:
-        query = query.filter(models.POI.category == category)
-    if level:
-        query = query.filter(models.POI.level == level)
-    
-    # 获取总数和分页结果
-    total = query.count()
-    items = query.offset(offset).limit(limit).all()
-    
-    return {"items": items, "total": total}
+    try:
+        # 首先筛选在边界框内的POI
+        query = db.query(models.POI).filter(
+            models.POI.longitude >= min_lng,
+            models.POI.longitude <= max_lng,
+            models.POI.latitude >= min_lat,
+            models.POI.latitude <= max_lat
+        )
+        
+        # 添加名称搜索条件 - 使用ilike进行大小写不敏感匹配
+        if q:
+            search_pattern = f"%{q}%"
+            query = query.filter(models.POI.name.ilike(search_pattern))
+        
+        # 添加属性筛选条件 - 使用模糊匹配
+        if province:
+            # 处理省份名称中可能带有"省"/"市"/"自治区"的情况
+            province_core = province.replace("省", "").replace("市", "").replace("自治区", "").replace("特别行政区", "")
+            query = query.filter(or_(
+                models.POI.province.ilike(f"%{province}%"),  # 匹配完整名称
+                models.POI.province.ilike(f"%{province_core}%")  # 匹配核心名称
+            ))
+
+        if city:
+            # 处理城市名称中可能带有"市"/"区"/"县"的情况
+            city_core = city.replace("市", "").replace("区", "").replace("县", "")
+            query = query.filter(or_(
+                models.POI.city.ilike(f"%{city}%"),  # 匹配完整名称
+                models.POI.city.ilike(f"%{city_core}%")  # 匹配核心名称
+            ))
+
+        if category:
+            query = query.filter(models.POI.category.ilike(f"%{category}%"))
+
+        if level:
+            # 处理不同格式的等级表示
+            level_mapping = {
+                "AAAAA": "5A", "AAAA": "4A", "AAA": "3A", "AA": "2A", "A": "1A",
+                "5A": "AAAAA", "4A": "AAAA", "3A": "AAA", "2A": "AA", "1A": "A"
+            }
+            
+            # 如果提供的level存在于映射中，获取其对应的替代表示
+            alternative_level = level_mapping.get(level, "")
+            
+            if alternative_level:
+                # 同时查询原始等级和替代等级
+                query = query.filter(or_(
+                    models.POI.level == level,
+                    models.POI.level == alternative_level
+                ))
+            else:
+                # 如果没有找到替代表示，则仅使用原始等级精确匹配
+                query = query.filter(models.POI.level == level)
+        
+        # 获取总数和分页结果
+        total = query.count()
+        items = query.order_by(models.POI.id).offset(offset).limit(limit).all()
+        
+        return {"items": items, "total": total}
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise APIError(
+            code=ErrorCode.DATABASE_ERROR,
+            message="查询边界框内POI失败",
+            details={"error": str(e)}
+        )
 
 def get_pois_in_radius(
     db: Session, 
@@ -413,45 +571,83 @@ def get_pois_in_radius(
     :param center_lng: 中心点经度
     :param center_lat: 中心点纬度
     :param radius: 半径，单位为米
-    :param q: 可选的名称关键词
-    :param province: 可选的省份过滤
-    :param city: 可选的城市过滤
-    :param category: 可选的类别过滤
-    :param level: 可选的级别过滤
+    :param q: 可选的名称关键词 (大小写不敏感)
+    :param province: 可选的省份过滤 (模糊匹配)
+    :param city: 可选的城市过滤 (模糊匹配)
+    :param category: 可选的类别过滤 (模糊匹配)
+    :param level: 可选的级别过滤 (灵活匹配)
     :param offset: 分页偏移量
     :param limit: 每页条数
     :return: 包含POI列表和总数的字典
     """
-    # 使用简化的距离计算 (平面欧氏距离，适用于小范围)
-    # 将半径（米）转换为大致的经纬度差值
-    # 每度经纬度约为111公里(111000米)，这是近似值
-    query = db.query(models.POI).filter(
-        func.sqrt(
-            func.pow(models.POI.longitude - center_lng, 2) + 
-            func.pow(models.POI.latitude - center_lat, 2)
-        ) <= radius / 111000  # 转换为经纬度距离单位
-    )
-    
-    # 添加名称搜索条件
-    if q:
-        search_pattern = f"%{q}%"
-        query = query.filter(models.POI.name.like(search_pattern))
-    
-    # 添加属性筛选条件
-    if province:
-        query = query.filter(models.POI.province == province)
-    if city:
-        query = query.filter(models.POI.city == city)
-    if category:
-        query = query.filter(models.POI.category == category)
-    if level:
-        query = query.filter(models.POI.level == level)
-    
-    # 获取总数和分页结果
-    total = query.count()
-    items = query.offset(offset).limit(limit).all()
-    
-    return {"items": items, "total": total}
+    try:
+        # 使用简化的距离计算 (平面欧氏距离，适用于小范围)
+        # 将半径（米）转换为大致的经纬度差值
+        # 每度经纬度约为111公里(111000米)，这是近似值
+        query = db.query(models.POI).filter(
+            func.sqrt(
+                func.pow(models.POI.longitude - center_lng, 2) + 
+                func.pow(models.POI.latitude - center_lat, 2)
+            ) <= radius / 111000  # 转换为经纬度距离单位
+        )
+        
+        # 添加名称搜索条件 - 使用ilike进行大小写不敏感匹配
+        if q:
+            search_pattern = f"%{q}%"
+            query = query.filter(models.POI.name.ilike(search_pattern))
+        
+        # 添加属性筛选条件 - 使用模糊匹配
+        if province:
+            # 处理省份名称中可能带有"省"/"市"/"自治区"的情况
+            province_core = province.replace("省", "").replace("市", "").replace("自治区", "").replace("特别行政区", "")
+            query = query.filter(or_(
+                models.POI.province.ilike(f"%{province}%"),  # 匹配完整名称
+                models.POI.province.ilike(f"%{province_core}%")  # 匹配核心名称
+            ))
+
+        if city:
+            # 处理城市名称中可能带有"市"/"区"/"县"的情况
+            city_core = city.replace("市", "").replace("区", "").replace("县", "")
+            query = query.filter(or_(
+                models.POI.city.ilike(f"%{city}%"),  # 匹配完整名称
+                models.POI.city.ilike(f"%{city_core}%")  # 匹配核心名称
+            ))
+
+        if category:
+            query = query.filter(models.POI.category.ilike(f"%{category}%"))
+
+        if level:
+            # 处理不同格式的等级表示
+            level_mapping = {
+                "AAAAA": "5A", "AAAA": "4A", "AAA": "3A", "AA": "2A", "A": "1A",
+                "5A": "AAAAA", "4A": "AAAA", "3A": "AAA", "2A": "AA", "1A": "A"
+            }
+            
+            # 如果提供的level存在于映射中，获取其对应的替代表示
+            alternative_level = level_mapping.get(level, "")
+            
+            if alternative_level:
+                # 同时查询原始等级和替代等级
+                query = query.filter(or_(
+                    models.POI.level == level,
+                    models.POI.level == alternative_level
+                ))
+            else:
+                # 如果没有找到替代表示，则仅使用原始等级精确匹配
+                query = query.filter(models.POI.level == level)
+        
+        # 获取总数和分页结果
+        total = query.count()
+        items = query.order_by(models.POI.id).offset(offset).limit(limit).all()
+        
+        return {"items": items, "total": total}
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise APIError(
+            code=ErrorCode.DATABASE_ERROR,
+            message="查询半径范围内POI失败",
+            details={"error": str(e)}
+        )
 
 def create_poi(db: Session, poi: schemas.POICreate, user_id: int) -> models.POI:
     """

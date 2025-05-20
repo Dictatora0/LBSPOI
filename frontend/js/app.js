@@ -53,6 +53,8 @@ const app = new Vue({
         
         // 筛选和搜索
         searchQuery: '',
+        currentSearchMode: 'normal', // 'normal', 'keyword', 'bbox', 'radius' - 用于记录当前搜索模式
+        lastSearchParams: null, // 用于存储最后一次搜索的参数
         filterForm: {
             province: '',
             category: '',
@@ -661,11 +663,20 @@ const app = new Vue({
                     ...filters
                 };
                 
+                // 如果有搜索关键词且搜索模式是keyword，添加到请求参数
+                if (this.currentSearchMode === 'keyword' && this.searchQuery.trim() !== '') {
+                    params.q = this.searchQuery.trim();
+                }
+                
                 // 构建查询字符串
                 const queryString = Object.keys(params)
                     .filter(key => params[key] !== '' && params[key] !== null && params[key] !== undefined)
                     .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
                     .join('&');
+                
+                console.log('loadPOIs 参数:', params);
+                console.log('loadPOIs 查询字符串:', queryString);
+                console.log('当前搜索模式:', this.currentSearchMode);
                 
                 // 获取API密钥
                 const apiKey = localStorage.getItem('apiKey');
@@ -712,14 +723,57 @@ const app = new Vue({
                     this.currentPage = page;
                     loadedSuccessfully = true; // 标记成功加载测试数据
                 } else {
-                    // 有 API 密钥，尝试从后端加载
-                    console.log(`[loadPOIs] Attempting to load with API Key: ${apiKey}`);
-                    // 发送请求到带斜杠的 URL
-                    const response = await axios.get(`${API_BASE_URL}/pois/?${queryString}`, { // 确认URL有斜杠
-                        headers: {
-                            'X-API-Key': apiKey
-                        }
-                    });
+                    // 有 API 密钥，基于搜索模式选择不同的API端点
+                    console.log(`[loadPOIs] Attempting to load with API Key: ${apiKey}, search mode: ${this.currentSearchMode}`);
+                    
+                    let response;
+                    
+                    // 根据搜索模式选择不同的API端点
+                    if (this.currentSearchMode === 'keyword' && this.searchQuery.trim() !== '') {
+                        // 关键词搜索 - 确保同时传递筛选参数
+                        console.log('使用关键词搜索API:', `${API_BASE_URL}/pois/search/?${queryString}`);
+                        
+                        response = await axios.get(`${API_BASE_URL}/pois/search/?${queryString}`, {
+                            headers: {
+                                'X-API-Key': apiKey
+                            }
+                        });
+                    } else if (this.currentSearchMode === 'bbox' && this.lastSearchParams) {
+                        // 边界框搜索
+                        const bboxParams = {
+                            ...this.lastSearchParams,
+                            ...filters
+                        };
+                        
+                        response = await axios.post(`${API_BASE_URL}/pois/bbox/`, bboxParams, {
+                            headers: {
+                                'X-API-Key': apiKey
+                            }
+                        });
+                    } else if (this.currentSearchMode === 'radius' && this.lastSearchParams) {
+                        // 半径搜索
+                        const radiusParams = {
+                            ...this.lastSearchParams,
+                            ...filters
+                        };
+                        
+                        response = await axios.post(`${API_BASE_URL}/pois/radius/`, radiusParams, {
+                            headers: {
+                                'X-API-Key': apiKey
+                            }
+                        });
+                    } else {
+                        // 普通列表加载
+                        console.log('使用普通列表API:', `${API_BASE_URL}/pois/?${queryString}`);
+                        
+                        response = await axios.get(`${API_BASE_URL}/pois/?${queryString}`, {
+                            headers: {
+                                'X-API-Key': apiKey
+                            }
+                        });
+                    }
+                    
+                    console.log('API返回结果:', response.data);
                     
                     // 更新数据
                     this.pois = response.data.items;
@@ -737,16 +791,16 @@ const app = new Vue({
                 }
                 
             } catch (error) {
-                 console.log('[loadPOIs] API call failed, handling error:', error);
+                console.log('[loadPOIs] API call failed, handling error:', error);
                 // 即使API失败，也允许 handleApiError 处理（例如，如果401则登出）
                 this.handleApiError(error); 
             } finally {
                 // 如果尝试从API加载但失败了 (loadedSuccessfully仍然为false)
                 // 并且错误处理后用户未登录或没有API Key了，则加载测试数据作为最终回退
                 if (!loadedSuccessfully && (!this.isLoggedIn || !localStorage.getItem('apiKey'))) {
-                     console.log('[loadPOIs] Loading test data as final fallback after API error.');
-                     this.pois = [
-                         {
+                    console.log('[loadPOIs] Loading test data as final fallback after API error.');
+                    this.pois = [
+                        {
                             id: 1,
                             name: "西湖",
                             province: "浙江省",
@@ -760,15 +814,15 @@ const app = new Vue({
                     ];
                     this.totalPOIs = this.pois.length;
                     this.currentPage = 1;
-                 } 
+                } 
                  
-                 // 如果地图已初始化，确保添加标记
-                 if (this.mapInitialized && map) {
-                     this.safeAddMarkers(this.pois);
-                 }
+                // 如果地图已初始化，确保添加标记
+                if (this.mapInitialized && map) {
+                    this.safeAddMarkers(this.pois);
+                }
                  
-                 this.loading = false;
-                 console.log('[loadPOIs] Finished loading.');
+                this.loading = false;
+                console.log('[loadPOIs] Finished loading.');
             }
         },
         
@@ -798,6 +852,9 @@ const app = new Vue({
         // 查询与筛选方法
         async searchPOIs() {
             if (this.searchQuery.trim() === '') {
+                // 如果搜索框为空，重置为普通模式
+                this.currentSearchMode = 'normal';
+                this.lastSearchParams = null;
                 await this.loadPOIs(1, this.filterForm);
             } else {
                 try {
@@ -808,12 +865,39 @@ const app = new Vue({
                         return;
                     }
                     
-                    // 发送搜索请求，确保URL以斜杠结尾
-                    const response = await axios.get(`${API_BASE_URL}/pois/search/?q=${encodeURIComponent(this.searchQuery)}&page=1&size=${this.pageSize}`, {
+                    // 设置搜索模式为关键词搜索
+                    this.currentSearchMode = 'keyword';
+                    
+                    // 记录搜索参数 (不包含筛选条件，因为这是初始搜索)
+                    this.lastSearchParams = {
+                        q: this.searchQuery.trim()
+                    };
+                    
+                    // 构建查询参数，包含当前的筛选条件
+                    const params = {
+                        q: this.searchQuery.trim(),
+                        page: 1,
+                        size: this.pageSize,
+                        ...this.filterForm
+                    };
+                    
+                    // 构建查询字符串
+                    const queryString = Object.keys(params)
+                        .filter(key => params[key] !== '' && params[key] !== null && params[key] !== undefined)
+                        .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
+                        .join('&');
+                    
+                    console.log('执行搜索，查询字符串:', queryString);
+                    console.log('当前筛选条件:', this.filterForm);
+                    
+                    // 发送搜索请求
+                    const response = await axios.get(`${API_BASE_URL}/pois/search/?${queryString}`, {
                         headers: {
                             'X-API-Key': apiKey
                         }
                     });
+                    
+                    console.log('搜索结果:', response.data);
                     
                     // 更新数据
                     this.pois = response.data.items;
@@ -823,23 +907,155 @@ const app = new Vue({
                     // 添加标记到地图
                     this.addMarkers(this.pois);
                     
+                    // 显示结果信息
+                    if (this.pois.length > 0) {
+                        this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
+                    } else {
+                        this.$message.info('未找到符合条件的POI');
+                    }
+                    
                 } catch (error) {
+                    console.error('搜索时发生错误:', error);
                     this.handleApiError(error);
                 }
             }
         },
         
         async applyFilters() {
-            await this.loadPOIs(1, this.filterForm);
+            // 应用筛选时保留当前的搜索模式和最后的搜索参数
+            if (this.currentSearchMode === 'normal') {
+                // 普通模式，只使用筛选条件
+                await this.loadPOIs(1, this.filterForm);
+            } else if (this.currentSearchMode === 'keyword') {
+                // 关键词搜索模式，组合关键词和筛选条件
+                if (this.searchQuery.trim() !== '') {
+                    try {
+                        // 获取API密钥
+                        const apiKey = localStorage.getItem('apiKey');
+                        if (!apiKey) {
+                            this.$message.warning('未找到API密钥，请登录并生成密钥');
+                            return;
+                        }
+                        
+                        // 构建查询参数，包含关键词和筛选条件
+                        const params = {
+                            q: this.searchQuery.trim(),
+                            page: 1,
+                            size: this.pageSize,
+                            ...this.filterForm
+                        };
+                        
+                        // 构建查询字符串
+                        const queryString = Object.keys(params)
+                            .filter(key => params[key] !== '' && params[key] !== null && params[key] !== undefined)
+                            .map(key => `${encodeURIComponent(key)}=${encodeURIComponent(params[key])}`)
+                            .join('&');
+                        
+                        // 更新最后的搜索参数
+                        this.lastSearchParams = {
+                            q: this.searchQuery.trim(),
+                            ...this.filterForm
+                        };
+                        
+                        // 直接发送搜索请求，带上筛选条件
+                        console.log('发送搜索请求，URL:', `${API_BASE_URL}/pois/search/?${queryString}`);
+                        console.log('筛选条件:', this.filterForm);
+                        
+                        const response = await axios.get(`${API_BASE_URL}/pois/search/?${queryString}`, {
+                            headers: {
+                                'X-API-Key': apiKey
+                            }
+                        });
+                        
+                        console.log('搜索结果:', response.data);
+                        
+                        // 更新数据
+                        this.pois = response.data.items;
+                        this.totalPOIs = response.data.total;
+                        this.currentPage = 1;
+                        
+                        // 添加标记到地图
+                        this.addMarkers(this.pois);
+                        
+                        // 显示结果信息
+                        if (this.pois.length > 0) {
+                            this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
+                        } else {
+                            this.$message.info('未找到符合条件的POI');
+                        }
+                        
+                    } catch (error) {
+                        console.error('筛选时发生错误:', error);
+                        this.handleApiError(error);
+                    }
+                } else {
+                    // 搜索框为空，回退到普通模式
+                    this.currentSearchMode = 'normal';
+                    this.lastSearchParams = null;
+                    await this.loadPOIs(1, this.filterForm);
+                }
+            } else if (this.currentSearchMode === 'bbox' && this.lastSearchParams) {
+                // 边界框搜索模式，合并边界参数和筛选条件
+                const bboxParams = {
+                    ...this.lastSearchParams,
+                    ...this.filterForm
+                };
+                await this.queryPOIsByBoundingBox(
+                    bboxParams.min_lat,
+                    bboxParams.min_lng,
+                    bboxParams.max_lat,
+                    bboxParams.max_lng
+                );
+            } else if (this.currentSearchMode === 'radius' && this.lastSearchParams) {
+                // 半径搜索模式，合并半径参数和筛选条件
+                const radiusParams = {
+                    ...this.lastSearchParams,
+                    ...this.filterForm
+                };
+                await this.queryPOIsByRadius(
+                    radiusParams.center_lat,
+                    radiusParams.center_lng,
+                    radiusParams.radius
+                );
+            } else {
+                // 其他情况，回退到普通模式
+                this.currentSearchMode = 'normal';
+                this.lastSearchParams = null;
+                await this.loadPOIs(1, this.filterForm);
+            }
         },
         
         resetFilters() {
+            console.log('重置筛选条件，当前搜索模式:', this.currentSearchMode);
+            console.log('重置前的筛选条件:', JSON.stringify(this.filterForm));
+            
             this.filterForm = {
                 province: '',
                 category: '',
                 level: ''
             };
-            this.loadPOIs(1);
+            
+            console.log('重置后的筛选条件:', JSON.stringify(this.filterForm));
+            
+            if (this.currentSearchMode === 'keyword' && this.searchQuery.trim() !== '') {
+                // 如果是关键词搜索模式且有关键词，只重置筛选条件但保留关键词
+                console.log('关键词搜索模式下重置筛选条件，保留关键词:', this.searchQuery);
+                this.searchPOIs();
+            } else if (this.currentSearchMode === 'bbox' && this.lastSearchParams) {
+                // 如果是边界框搜索，只重置筛选条件但保留边界框参数
+                const { min_lat, min_lng, max_lat, max_lng } = this.lastSearchParams;
+                console.log('边界框搜索模式下重置筛选条件，保留边界框参数');
+                this.queryPOIsByBoundingBox(min_lat, min_lng, max_lat, max_lng);
+            } else if (this.currentSearchMode === 'radius' && this.lastSearchParams) {
+                // 如果是半径搜索，只重置筛选条件但保留半径参数
+                const { center_lat, center_lng, radius } = this.lastSearchParams;
+                console.log('半径搜索模式下重置筛选条件，保留半径参数');
+                this.queryPOIsByRadius(center_lat, center_lng, radius);
+            } else {
+                // 其他情况，完全重置
+                console.log('完全重置搜索和筛选条件');
+                this.loadPOIs(1);
+            }
         },
         
         async handlePageChange(page) {
@@ -854,6 +1070,9 @@ const app = new Vue({
                     this.$message.warning('未找到API密钥，请登录并生成密钥');
                     return;
                 }
+                
+                // 设置搜索模式为边界框搜索
+                this.currentSearchMode = 'bbox';
                 
                 // 准备请求参数
                 const params = {
@@ -872,6 +1091,9 @@ const app = new Vue({
                 if (this.filterForm.province) params.province = this.filterForm.province;
                 if (this.filterForm.category) params.category = this.filterForm.category;
                 if (this.filterForm.level) params.level = this.filterForm.level;
+                
+                // 记录搜索参数
+                this.lastSearchParams = { ...params };
                 
                 // 设置加载状态
                 this.loading = true;
@@ -895,7 +1117,11 @@ const app = new Vue({
                 this.clearSelectionLayers();
                 
                 // 显示结果信息
-                this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
+                if (this.pois.length > 0) {
+                    this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
+                } else {
+                    this.$message.info('未找到符合条件的POI');
+                }
                 
                 // 确保DOM更新完成后结束加载状态
                 this.$nextTick(() => {
@@ -920,6 +1146,9 @@ const app = new Vue({
                     return;
                 }
                 
+                // 设置搜索模式为半径搜索
+                this.currentSearchMode = 'radius';
+                
                 // 准备请求参数
                 const params = {
                     center_lat: centerLat,
@@ -936,6 +1165,9 @@ const app = new Vue({
                 if (this.filterForm.province) params.province = this.filterForm.province;
                 if (this.filterForm.category) params.category = this.filterForm.category;
                 if (this.filterForm.level) params.level = this.filterForm.level;
+                
+                // 记录搜索参数
+                this.lastSearchParams = { ...params };
                 
                 // 设置加载状态
                 this.loading = true;
@@ -959,7 +1191,11 @@ const app = new Vue({
                 this.clearSelectionLayers();
                 
                 // 显示结果信息
-                this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
+                if (this.pois.length > 0) {
+                    this.$message.success(`找到 ${response.data.total} 个匹配的POI`);
+                } else {
+                    this.$message.info('未找到符合条件的POI');
+                }
                 
                 // 确保DOM更新完成后结束加载状态
                 this.$nextTick(() => {
