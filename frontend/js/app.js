@@ -1692,8 +1692,22 @@ const app = new Vue({
         },
         
         async loadAdminData() {
-            if (!this.currentUser || this.currentUser.role !== 'admin') {
+            console.log('开始加载管理员数据...');
+            console.log('当前用户状态:', this.currentUser);
+            
+            if (!this.currentUser) {
+                this.$message.warning('请先登录');
+                console.error('尝试加载管理员数据时没有用户登录');
+                return;
+            }
+            
+            // 检查角色（兼容大小写）
+            const userRole = this.currentUser.role ? this.currentUser.role.toLowerCase() : '';
+            console.log('当前用户角色:', userRole);
+            
+            if (userRole !== 'admin') {
                 this.$message.warning('您没有管理员权限');
+                console.error('非管理员用户尝试访问管理面板:', userRole);
                 return;
             }
             
@@ -1703,31 +1717,98 @@ const app = new Vue({
                 const token = localStorage.getItem('token');
                 if (!token) {
                     this.$message.warning('未登录或登录已过期');
+                    console.error('尝试加载管理员数据时没有令牌');
+                    this.adminLoading = false;
                     return;
                 }
                 
-                // 根据当前管理部分加载数据，确保所有URL以斜杠结尾
+                // 根据当前管理部分加载数据
                 if (this.adminSection === 'users') {
                     // 加载用户列表
+                    console.log('加载用户数据...');
                     const response = await axios.get(`${API_BASE_URL}/users/`, {
                         headers: {
                             'Authorization': `Bearer ${token}`
                         }
                     });
                     this.adminUsers = response.data;
+                    console.log('成功加载用户数据:', this.adminUsers.length, '个用户');
                 } else if (this.adminSection === 'pois') {
-                    // 加载POI列表，这里简化为使用已有的POI数据
-                    const response = await axios.get(`${API_BASE_URL}/pois/?page=1&size=50`, {
+                    // 加载POI列表
+                    console.log('加载POI数据...');
+                    console.log('当前管理部分:', this.adminSection);
+                    
+                    const apiKey = localStorage.getItem('apiKey');
+                    if (!apiKey) {
+                        this.$message.warning('API密钥未找到，请先创建API密钥');
+                        console.error('尝试加载POI数据时API密钥未找到');
+                        this.adminLoading = false;
+                        return;
+                    }
+                    
+                    console.log('请求POI数据...');
+                    const poiUrl = `${API_BASE_URL}/pois/?page=1&size=100`;
+                    console.log('POI请求URL:', poiUrl);
+                    
+                    const response = await axios.get(poiUrl, {
                         headers: {
-                            'X-API-Key': localStorage.getItem('apiKey')
+                            'X-API-Key': apiKey
                         }
                     });
-                    this.adminPOIs = response.data.items;
+                    
+                    console.log('POI响应数据:', response.data);
+                    
+                    // 确保数据成功加载
+                    if (response.data && response.data.items) {
+                        this.adminPOIs = response.data.items;
+                        console.log('成功加载POI数据:', this.adminPOIs.length, '个POI');
+                        
+                        // 检查POI数据格式
+                        if (this.adminPOIs.length > 0) {
+                            console.log('首个POI数据示例:', JSON.stringify(this.adminPOIs[0]));
+                        }
+                        
+                        // 强制Vue更新视图
+                        this.$nextTick(() => {
+                            console.log('强制更新视图');
+                            this.$forceUpdate();
+                            
+                            // 额外检查更新后的DOM元素
+                            setTimeout(() => {
+                                const buttons = document.querySelectorAll('.el-table__body .el-button');
+                                console.log('表格中的按钮数量:', buttons.length);
+                                
+                                const editButtons = document.querySelectorAll('.el-table__body .el-button--warning');
+                                console.log('编辑按钮数量:', editButtons.length);
+                                
+                                const deleteButtons = document.querySelectorAll('.el-table__body .el-button--danger');
+                                console.log('删除按钮数量:', deleteButtons.length);
+                            }, 500);
+                        });
+                    } else {
+                        console.error('POI数据结构不正确:', response.data);
+                        this.$message.error('POI数据格式异常');
+                    }
                 }
+                
             } catch (error) {
+                console.error('加载管理员数据失败:', error);
+                if (error.response) {
+                    console.error('错误响应数据:', error.response.data);
+                    console.error('错误状态码:', error.response.status);
+                }
                 this.handleApiError(error);
             } finally {
                 this.adminLoading = false;
+                console.log('管理员数据加载完成');
+            }
+        },
+        
+        // 刷新POI数据
+        refreshPOIData() {
+            if (this.adminSection === 'pois') {
+                this.loadAdminData();
+                this.$message.success('POI数据已刷新');
             }
         },
         
@@ -2538,27 +2619,52 @@ const app = new Vue({
          * @param {Object} poi - 要编辑的POI对象
          */
         openEditPoiDialog(poi) {
-            if (!this.currentUser || this.currentUser.role !== 'admin') {
-                this.$message.warning('只有管理员可以编辑POI');
+            console.log('尝试打开编辑POI对话框:', poi);
+            
+            if (!this.currentUser) {
+                this.$message.warning('请先登录');
                 return;
             }
+            
+            // 检查角色（兼容大小写）
+            const userRole = this.currentUser.role ? this.currentUser.role.toLowerCase() : '';
+            if (userRole !== 'admin') {
+                this.$message.warning('只有管理员可以编辑POI');
+                console.log('当前用户角色:', userRole);
+                return;
+            }
+            
+            // 检查POI对象是否完整
+            if (!poi || !poi.id) {
+                console.error('无效的POI对象:', poi);
+                this.$message.error('无效的POI数据');
+                return;
+            }
+            
+            console.log('准备编辑POI:', poi.id, poi.name);
             
             // 克隆POI数据到编辑表单
             this.editPoiForm = {
                 id: poi.id,
-                name: poi.name,
-                category: poi.category,
-                level: poi.level,
-                province: poi.province,
+                name: poi.name || '',
+                category: poi.category || '',
+                level: poi.level || '',
+                province: poi.province || '',
                 city: poi.city || '',
                 address: poi.address || '',
                 description: poi.description || '',
                 latitude: poi.latitude,
                 longitude: poi.longitude,
-                extension: poi.extension || {}
+                extension: poi.extensions && poi.extensions.length > 0 ? 
+                    poi.extensions[0] : 
+                    (poi.extension || {})
             };
             
+            console.log('编辑表单数据准备完成:', this.editPoiForm);
+            
             this.showEditPoiDialog = true;
+            
+            console.log('编辑对话框已显示');
             
             // 调整对话框位置，类似于添加POI对话框
             this.$nextTick(() => {
@@ -2591,6 +2697,8 @@ const app = new Vue({
             
             // 在地图上标记POI位置
             if (map && poi.latitude && poi.longitude) {
+                console.log('在地图上标记POI位置:', poi.latitude, poi.longitude);
+                
                 // 清除之前的标记
                 if (this.editPoiMarker) {
                     map.removeLayer(this.editPoiMarker);
@@ -2601,6 +2709,8 @@ const app = new Vue({
                 
                 // 调整地图视图到标记位置
                 map.setView([poi.latitude, poi.longitude], 15);
+            } else {
+                console.warn('无法在地图上标记POI位置，坐标缺失或无效');
             }
             
             this.$message.info('请修改POI信息，可以直接编辑经纬度坐标');
@@ -2794,8 +2904,18 @@ const app = new Vue({
          * @param {number} poiId - 要删除的POI ID
          */
         async deletePoi(poiId) {
-            if (!this.currentUser || this.currentUser.role !== 'admin') {
+            console.log('尝试删除POI:', poiId);
+            
+            if (!this.currentUser) {
+                this.$message.warning('请先登录');
+                return;
+            }
+            
+            // 检查角色（兼容大小写）
+            const userRole = this.currentUser.role ? this.currentUser.role.toLowerCase() : '';
+            if (userRole !== 'admin') {
                 this.$message.warning('只有管理员可以删除POI');
+                console.log('当前用户角色:', userRole);
                 return;
             }
             
@@ -2813,15 +2933,21 @@ const app = new Vue({
                     return;
                 }
                 
+                console.log('开始发送删除POI请求...');
+                
                 // 发送删除POI请求
-                await axios.delete(`${API_BASE_URL}/pois/${poiId}`, {
+                const response = await axios.delete(`${API_BASE_URL}/pois/${poiId}`, {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
                 });
                 
+                console.log('删除POI响应:', response.data);
+                
                 // 从管理员POI列表中移除
+                const beforeLength = this.adminPOIs.length;
                 this.adminPOIs = this.adminPOIs.filter(p => p.id !== poiId);
+                console.log(`从管理员POI列表中移除: ${beforeLength} -> ${this.adminPOIs.length}`);
                 
                 // 从主POI列表中移除
                 this.pois = this.pois.filter(p => p.id !== poiId);
@@ -2839,11 +2965,21 @@ const app = new Vue({
                 
                 this.$message.success('POI删除成功');
                 
+                // 强制更新视图
+                this.$nextTick(() => {
+                    this.$forceUpdate();
+                });
+                
             } catch (error) {
                 if (error === 'cancel') {
                     // 用户取消了删除操作
                     this.$message.info('已取消删除');
                 } else {
+                    console.error('删除POI时出错:', error);
+                    if (error.response) {
+                        console.error('错误响应数据:', error.response.data);
+                        console.error('错误状态码:', error.response.status);
+                    }
                     this.handleApiError(error);
                 }
             }

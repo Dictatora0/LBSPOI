@@ -639,10 +639,24 @@
                     </el-table>
                 </el-tab-pane>
                 <el-tab-pane label="POI管理" name="pois">
-                    <div style="margin-bottom: 15px">
-                        <el-button type="primary" @click="openAddPoiDialog">添加POI</el-button>
+                    <div style="margin-bottom: 15px; display: flex; justify-content: space-between;">
+                        <div>
+                            <el-button type="primary" @click="openAddPoiDialog">添加POI</el-button>
+                            <el-button type="info" @click="refreshPOIData">刷新数据</el-button>
+                        </div>
+                        <div>
+                            <span v-if="adminPOIs.length > 0">共 {{ adminPOIs.length }} 个POI</span>
+                            <span v-else>暂无POI数据</span>
+                        </div>
                     </div>
+                    
+                    <div v-if="adminPOIs.length === 0 && !adminLoading" style="text-align: center; padding: 20px;">
+                        <i class="el-icon-warning" style="font-size: 24px; color: #E6A23C;"></i>
+                        <p>未找到POI数据。请检查您的API密钥是否有效，或者添加一个新的POI。</p>
+                    </div>
+                    
                     <el-table
+                        v-else
                         :data="adminPOIs"
                         border
                         stripe
@@ -654,7 +668,7 @@
                         <el-table-column prop="city" label="城市"></el-table-column>
                         <el-table-column prop="category" label="类别"></el-table-column>
                         <el-table-column prop="level" label="等级" width="100"></el-table-column>
-                        <el-table-column label="操作" width="220">
+                        <el-table-column label="操作" width="250" fixed="right">
                             <template slot-scope="scope">
                                 <el-button size="mini" type="primary" @click="selectPOI(scope.row)">查看</el-button>
                                 <el-button size="mini" type="warning" @click="openEditPoiDialog(scope.row)">编辑</el-button>
