@@ -12,7 +12,7 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 db = SessionLocal()
 
 # 查询名称重复的POI
-print('===== 查询重名POI结果 =====')
+print(' 查询重名POI结果 ')
 duplicate_names = db.query(POI.name, func.count(POI.name)).group_by(POI.name).having(func.count(POI.name) > 1).all()
 
 if duplicate_names:
@@ -27,7 +27,7 @@ else:
     print('数据库中没有发现重名的POI')
 
 # 查询坐标完全相同的POI
-print('\n===== 查询重复坐标POI结果 =====')
+print('\n 查询重复坐标POI结果 ')
 duplicate_coords = db.query(
     POI.longitude, POI.latitude, func.count('*')
 ).group_by(
@@ -48,7 +48,7 @@ else:
     print('数据库中没有发现坐标完全相同的POI')
 
 # 查询名称相似度很高的POI（可能是拼写错误或者别名）
-print('\n===== 查询相似名称的POI =====')
+print('\n 查询相似名称的POI ')
 print('注: 这需要数据库支持模糊匹配，以下仅检查简单的包含关系')
 
 all_pois = db.query(POI.id, POI.name).all()

@@ -46,7 +46,7 @@
 ## 系统架构
 
 - **后端**：FastAPI
-- **数据库**：MySQL
+- **数据库**：MySQL (SQLAlchemy ORM)
 - **前端**：Vue.js + Element UI
 - **地图**：Leaflet.js
 
