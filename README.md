@@ -15,7 +15,7 @@
 
 - **API安全**：用户认证、授权和公众用户访问限速
 - **角色权限**：
-  - 管理员：对POI数据进行增删改查管理、设置用户权限、管理API密钥调用限制
+  - 管理员：对POI数据进行增删改查管理、管理用户账户与权限（包括启用/禁用用户，间接管理其API密钥的有效性）
   - 公众用户：用户注册、个人信息维护、APIKEY获取和POI数据查询
 - **POI查询**：
   - 按名称查询
@@ -127,9 +127,10 @@ http://localhost:8080
 系统后端API遵循RESTful设计原则，使用标准的HTTP方法操作资源，并通过HTTP状态码指示操作结果。所有数据交换均采用JSON格式。
 
 ### 基础URL
-所有API端点的基础URL为 `http://localhost:8080/api`。
+所有API端点的基础URL为 `http://localhost:8080/api`。（端口8080可以自行修改）
 
-### 认证与授权 (`/auth`)
+### [认证与授权 (`/auth`)](backend/poi_service/app/routers/auth.py)
+点击上方链接可以跳转到认证与授权API的源码文件。
 
 | 方法  | 路径                | 描述                                                       | 主要请求体/参数                 | 成功响应状态码 | 代表性成功响应体示例 (部分字段) |
 |-------|---------------------|------------------------------------------------------------|---------------------------------|----------------|-------------------------------|
@@ -140,7 +141,8 @@ http://localhost:8080
 | `GET`   | `/auth/apikeys`     | (认证用户) 获取当前用户的所有API密钥                         | (无，基于Token认证)             | `200 OK`       | `[ { "key": "apikey1" }, { "key": "apikey2" } ]` |
 | `DELETE`| `/auth/apikeys/{key}`| (认证用户) 停用指定的API密钥                                 | Path param: `key`               | `200 OK`       | `{ "message": "API密钥已停用" }` |
 
-### 用户管理 (`/users`)
+### [用户管理 (`/users`)](backend/poi_service/app/routers/users.py)
+点击上方链接可以跳转到用户管理API的源码文件。
 
 | 方法  | 路径                | 描述                                         | 认证方式        | 主要请求体/参数                 | 成功响应状态码 | 代表性成功响应体示例 (部分字段) |
 |-------|---------------------|----------------------------------------------|-----------------|---------------------------------|----------------|-------------------------------|
@@ -151,7 +153,7 @@ http://localhost:8080
 | `PUT`   | `/users/{user_id}/role` | (管理员) 更新指定用户角色                  | JWT Token (Admin) | Path param: `user_id`, Body: `{"role":"admin"}` | `200 OK`       | `{ "message": "用户角色已更新为admin" }` |
 | `PUT`   | `/users/{user_id}/status`| (管理员) 启用或禁用指定用户                | JWT Token (Admin) | Path param: `user_id`, Body: `{"is_active":false}` | `200 OK`       | `{ "message": "用户已禁用" }` |
 
-### POI数据 (`/pois`)
+### [POI数据 (`/pois`)](backend/poi_service/app/routers/pois.py)
 
 API密钥 (`X-API-KEY` 请求头) 用于访问以下公共查询端点。创建、更新、删除POI需要管理员JWT Token。
 
@@ -166,8 +168,8 @@ API密钥 (`X-API-KEY` 请求头) 用于访问以下公共查询端点。创建�
 | `PUT`    | `/pois/{poi_id}`    | (管理员) 更新指定ID的POI信息                               | JWT Token (Admin) | Path param: `poi_id`, Body: `POIUpdate` schema    | `200 OK`       | `{ "id": 5, "name": "Updated POI", ... }` |
 | `DELETE` | `/pois/{poi_id}`    | (管理员) 删除指定ID的POI                                   | JWT Token (Admin) | Path param: `poi_id`                              | `200 OK`       | `{ "message": "ID为5的POI已成功删除" }` |
 
-### 地图服务 (`/map`)
-
+### [地图服务 (`/map`)](backend/poi_service/app/routers/map.py)
+点击上方链接可以跳转到地图服务API的源码文件。
 API密钥 (`X-API-KEY` 请求头) 用于访问以下所有地图服务。这些服务依赖于后端配置的有效高德地图API Key。
 
 | 方法  | 路径                | 描述                                 | 主要请求体/参数                                                                | 成功响应状态码 | 代表性成功响应体示例 (高德原始响应) |
@@ -183,16 +185,16 @@ API密钥 (`X-API-KEY` 请求头) 用于访问以下所有地图服务。这些�
 
 ## API测试
 
-项目根目录下提供了API测试脚本 `test_api.sh`，用于对后端API进行自动化测试。
+项目根目录下提供了[API测试脚本 `test_api.sh`](test_api.sh)，用于对后端API进行自动化测试。
 
 
 **前提**
 
-1.  确保后端服务正在 `http://localhost:8080` 运行。
-2.  确保 `backend/poi_service/.env` 文件已正确配置，特别是 `GAODE_API_KEY`。
-3.  确保数据库中存在一个名为 `tempadmin` 的用户，其密码为 `password123`，并且角色为 `admin`。此用户用于执行脚本中的管理员权限操作。
+1.  确保您的系统中已安装 `jq` (JSON命令行处理器)。如果未安装，可以使用包管理器安装 (例如 `sudo apt-get install jq` 或 `brew install jq`)。
+2.  确保后端服务正在 `http://localhost:8080` 运行。
+3.  确保 `backend/poi_service/.env` 文件已正确配置，特别是 `GAODE_API_KEY`。
+4.  确保数据库中存在一个名为 `tempadmin` 的用户，其密码为 `password123`，并且角色为 `admin`。此用户用于执行脚本中的管理员权限操作。
     (如果不存在，请先注册 `tempadmin`，然后通过数据库将其角色更新为 `admin`: `UPDATE users SET role = 'admin' WHERE username = 'tempadmin';`)
-4.  确保您的系统中已安装 `jq` (JSON命令行处理器)。如果未安装，可以使用包管理器安装 (例如 `sudo apt-get install jq` 或 `brew install jq`)。
 
 **测试方法:**
 1. 在项目根目录下，给脚本执行权限:
