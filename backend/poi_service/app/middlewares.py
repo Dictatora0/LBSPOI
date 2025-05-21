@@ -160,7 +160,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                 "message": "服务器内部错误",
                 "details": {
                     # 尝试更安全地转换异常信息为字符串
-                    "error": repr(e) # 使用repr可能比str更安全
+                    "error": repr(e) 
                 }
             }
             
@@ -180,7 +180,7 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                     content=error_details
                 )
             except Exception as serialization_error:
-                # 如果序列化仍然失败，返回一个非常通用的错误
+                # 如果序列化仍然失败，返回通用的错误
                 logger.critical(f"Failed to serialize error response: {serialization_error}", exc_info=True)
                 return JSONResponse(
                     status_code=500,

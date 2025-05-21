@@ -178,20 +178,8 @@ API密钥 (`X-API-KEY` 请求头) 用于访问以下所有地图服务。这些�
 | `GET`   | `/map/route`        | 路径规划 (步行、驾车、公交、骑行)      | Query params: `origin_lng`, `origin_lat`, `dest_lng`, `dest_lat`, `mode`       | `200 OK`       | (高德路径规划API的JSON响应)          |
 
 ### 通用约定与状态码
-- **成功响应**: 
-  - `200 OK`: 请求成功。通常用于 `GET` 获取资源、`PUT` 更新资源、`POST` 创建资源（如果服务器选择不返回 `201`）以及部分 `DELETE` 操作。
-  - `201 Created`: (本系统未使用，但RESTful常见) 资源创建成功，通常响应体包含新创建的资源，`Location`头指向新资源URL。
-  - `204 No Content`: (本系统未使用，但RESTful常见) 操作成功，但响应体中无内容。通常用于 `DELETE` 成功。
-- **客户端错误**: 
-  - `400 Bad Request`: 请求无效。例如，请求参数缺失、格式错误，或不符合业务逻辑的简单校验（非Pydantic校验）。
-  - `401 Unauthorized`: 未认证。请求需要用户认证，但未提供有效的认证凭据 (如Token无效或缺失)。
-  - `403 Forbidden`: 禁止访问。已认证，但当前用户无权执行该操作或访问该资源。
-  - `404 Not Found`: 请求的资源不存在。
-  - `422 Unprocessable Entity`: 请求体数据无法处理。通常由FastAPI在请求体数据不符合Pydantic模型校验规则时自动返回。
-- **服务端错误**: 
-  - `500 Internal Server Error`: 服务器内部发生未预期的错误。
 
-
+[见backend/poi_service/app/errors.py](backend/poi_service/app/errors.py)
 
 ## API测试
 

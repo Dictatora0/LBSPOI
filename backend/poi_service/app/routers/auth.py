@@ -156,7 +156,8 @@ async def login(
 
 @router.post("/apikey", response_model=schemas.APIKey)
 async def create_api_key(
-    current_user: models.User = Depends(get_current_active_user),  # 当前已认证的活跃用户
+    current_user: models.User = Depends(get_current_active_user),  #  声明式依赖注入，它会在调用主逻辑前自动执行所依赖的函数。
+    
     db: Session = Depends(get_db)  # 数据库会话
 ):
     """
